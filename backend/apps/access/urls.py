@@ -1,0 +1,48 @@
+from django.urls import path
+
+from .views import (
+    ApproveRequestView,
+    CreateAccessRequestView,
+    CreateEmergencyAccessRequestView,
+    IncomingRequestsView,
+    OutgoingRequestsView,
+    OutgoingEmergencyRequestsView,
+    IssueEmergencyGrantView,
+    PendingEmergencyRequestsView,
+    ApproveEmergencyRequestView,
+    AuthorizedRecordView,
+    DownloadAuthorizedRecordView,
+    PatientAppointmentsView,
+    DoctorAppointmentsView,
+    AppointmentStatusView,
+    RejectEmergencyRequestView,
+    ValidateEmergencyGrantView,
+    EmergencyDisclosureView,
+    PatientRecordTargetsView,
+    RejectRequestView,
+    RevokeRequestView,
+)
+
+
+urlpatterns = [
+    path("requests", CreateAccessRequestView.as_view(), name="access-request-create"),
+    path("requests/incoming", IncomingRequestsView.as_view(), name="access-request-incoming"),
+    path("requests/outgoing", OutgoingRequestsView.as_view(), name="access-request-outgoing"),
+    path("appointments/patient", PatientAppointmentsView.as_view(), name="appointments-patient"),
+    path("appointments/doctor", DoctorAppointmentsView.as_view(), name="appointments-doctor"),
+    path("appointments/<uuid:appointment_id>", AppointmentStatusView.as_view(), name="appointment-status"),
+    path("records/<int:record_id>", AuthorizedRecordView.as_view(), name="access-authorized-record"),
+    path("records/<int:record_id>/download", DownloadAuthorizedRecordView.as_view(), name="access-authorized-record-download"),
+    path("emergency/requests", CreateEmergencyAccessRequestView.as_view(), name="emergency-request-create"),
+    path("emergency/requests/outgoing", OutgoingEmergencyRequestsView.as_view(), name="emergency-request-outgoing"),
+    path("emergency/requests/<uuid:request_id>/grant", IssueEmergencyGrantView.as_view(), name="emergency-grant-issue"),
+    path("emergency/grants/validate", ValidateEmergencyGrantView.as_view(), name="emergency-grant-validate"),
+    path("emergency/grants/disclose", EmergencyDisclosureView.as_view(), name="emergency-grant-disclose"),
+    path("emergency/requests/pending", PendingEmergencyRequestsView.as_view(), name="emergency-request-pending"),
+    path("emergency/requests/<uuid:request_id>/approve", ApproveEmergencyRequestView.as_view(), name="emergency-request-approve"),
+    path("emergency/requests/<uuid:request_id>/reject", RejectEmergencyRequestView.as_view(), name="emergency-request-reject"),
+    path("patient-records", PatientRecordTargetsView.as_view(), name="access-patient-records"),
+    path("requests/<uuid:request_id>/approve", ApproveRequestView.as_view(), name="access-request-approve"),
+    path("requests/<uuid:request_id>/reject", RejectRequestView.as_view(), name="access-request-reject"),
+    path("requests/<uuid:request_id>/revoke", RevokeRequestView.as_view(), name="access-request-revoke"),
+]

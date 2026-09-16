@@ -1,0 +1,18 @@
+import { useEffect, useState } from "react";
+import { CalendarDays, Loader2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Appointment, bookAppointment, getPatientAppointments } from "@/services/api";
+import { toast } from "sonner";
+
+export default function PatientAppointments() {
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [doctorWallet, setDoctorWallet] = useState(""); const [scheduledFor, setScheduledFor] = useState(""); const [reason, setReason] = useState(""); const [loading, setLoading] = useState(true); const [booking, setBooking] = useState(false);
+  const load = async () => { try { setAppointments(await getPatientAppointments()); } catch (error: any) { toast.error(error?.message || "Could not load appointments"); } finally { setLoading(false); } };
+  useEffect(() => { load(); }, []);
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBooking(true); try { await bookAppointment(doctorWallet, scheduledFor, reason); toast.success("Appointment request sent"); setDoctorWallet(""); setScheduledFor(""); setReason(""); await load(); } catch (error: any) { toast.error(error?.message || "Could not book appointment"); } finally { setBooking(false); } };
+  return <div className="space-y-6"><div><h1 className="text-2xl font-bold">Appointments</h1><p className="text-sm text-muted-foreground">Request and manage appointments with your care team.</p></div><Card><CardHeader><CardTitle className="flex items-center gap-2"><CalendarDays className="h-5 w-5 text-primary" />Book an Appointment</CardTitle></CardHeader><CardContent><form onSubmit={submit} className="grid gap-4 md:grid-cols-2"><div className="space-y-2"><Label htmlFor="doctorWallet">Doctor wallet</Label><Input id="doctorWallet" placeholder="0x..." value={doctorWallet} onChange={(e) => setDoctorWallet(e.target.value)} required /></div><div className="space-y-2"><Label htmlFor="scheduledFor">Preferred date and time</Label><Input id="scheduledFor" type="datetime-local" value={scheduledFor} onChange={(e) => setScheduledFor(e.target.value)} required /></div><div className="space-y-2 md:col-span-2"><Label htmlFor="appointmentReason">Reason</Label><Input id="appointmentReason" placeholder="Brief reason for the appointment" value={reason} onChange={(e) => setReason(e.target.value)} /></div><Button className="md:col-span-2" disabled={booking}>{booking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}{booking ? "Booking..." : "Request Appointment"}</Button></form></CardContent></Card><Card><CardHeader><CardTitle>Your Appointments</CardTitle></CardHeader><CardContent>{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : appointments.length ? <div className="space-y-3">{appointments.map((appointment) => <div key={appointment.id} className="flex flex-col gap-2 rounded-md border p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-semibold">{appointment.doctorName}</p><p className="text-sm text-muted-foreground">{new Date(appointment.scheduledFor).toLocaleString()}</p><p className="text-sm text-muted-foreground">{appointment.reason || "No reason provided"}</p></div><Badge variant="outline">{appointment.status}</Badge></div>)}</div> : <p className="text-sm text-muted-foreground">No appointments booked yet.</p>}</CardContent></Card></div>;
+}
