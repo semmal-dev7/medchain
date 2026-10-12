@@ -12,6 +12,7 @@ from .views import (
     ApproveEmergencyRequestView,
     AuthorizedRecordView,
     DownloadAuthorizedRecordView,
+    ViewAuthorizedRecordView,
     PatientAppointmentsView,
     DoctorAppointmentsView,
     AppointmentStatusView,
@@ -21,6 +22,7 @@ from .views import (
     PatientRecordTargetsView,
     RejectRequestView,
     RevokeRequestView,
+    UpdateAuthorizedRecordFhirView,
 )
 
 
@@ -33,6 +35,8 @@ urlpatterns = [
     path("appointments/<uuid:appointment_id>", AppointmentStatusView.as_view(), name="appointment-status"),
     path("records/<int:record_id>", AuthorizedRecordView.as_view(), name="access-authorized-record"),
     path("records/<int:record_id>/download", DownloadAuthorizedRecordView.as_view(), name="access-authorized-record-download"),
+    path("records/<int:record_id>/view", ViewAuthorizedRecordView.as_view(), name="access-authorized-record-view"),
+    path("records/<int:record_id>/fhir", UpdateAuthorizedRecordFhirView.as_view(), name="access-authorized-record-fhir"),
     path("emergency/requests", CreateEmergencyAccessRequestView.as_view(), name="emergency-request-create"),
     path("emergency/requests/outgoing", OutgoingEmergencyRequestsView.as_view(), name="emergency-request-outgoing"),
     path("emergency/requests/<uuid:request_id>/grant", IssueEmergencyGrantView.as_view(), name="emergency-grant-issue"),

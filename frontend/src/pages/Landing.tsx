@@ -43,7 +43,6 @@ export default function Landing() {
             <span className="text-xl font-bold text-primary">MedChain</span>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="ghost" onClick={() => navigate("/login")}>Login</Button>
             <Button onClick={() => navigate("/register")}>Get Started</Button>
           </div>
         </div>
@@ -59,7 +58,13 @@ export default function Landing() {
         </p>
         <div className="mt-10 flex items-center justify-center gap-4">
           <Button size="lg" onClick={() => navigate("/login")}>
-            Login to Dashboard
+            Patient Portal
+          </Button>
+          <Button size="lg" variant="outline" onClick={() => navigate("/hospital/login")}>
+            Hospital Portal
+          </Button>
+          <Button size="lg" variant="outline" onClick={() => navigate("/doctor/login")}>
+            Doctor Portal
           </Button>
         </div>
       </section>

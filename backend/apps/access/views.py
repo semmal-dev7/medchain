@@ -7,6 +7,9 @@ from rest_framework.views import APIView
 from apps.chain.services import ChainService
 from apps.records.models import Record
 from apps.records.serializers import RecordSerializer
+from apps.records.encryption import decrypt_file
+from apps.hospitals.models import HospitalEmergencyPolicy, HospitalMembership
+from apps.records.clinical import build_fhir_bundle, create_clinical_commitment
 from apps.users.models import UserProfile
 from apps.users.permissions import IsActiveDoctor, IsActiveEmergencyApprover, IsActivePatient, get_request_profile
 
@@ -16,6 +19,7 @@ from .serializers import (
     AccessRequestSerializer,
     CreateAccessRequestSerializer,
     CreateEmergencyAccessRequestSerializer,
+    ClinicalResourcesSerializer,
     DecisionSerializer,
     EmergencyAccessGrantSerializer,
     EmergencyApprovalSerializer,
@@ -153,6 +157,16 @@ class DownloadAuthorizedRecordView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
 
     def get(self, request, record_id):
+        return Response(
+            {"detail": "Doctors can view approved record details but cannot download patient records"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+
+class ViewAuthorizedRecordView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
+
+    def get(self, request, record_id):
         doctor = get_request_profile(request)
         record = Record.objects.filter(record_id=record_id, active=True).first()
         approved = AccessRequest.objects.filter(
@@ -161,14 +175,53 @@ class DownloadAuthorizedRecordView(APIView):
             status=AccessRequest.STATUS_APPROVED,
         ).exists() if record else False
         if not record or not approved or not ChainService().assert_access_active(record.record_id, doctor.wallet):
-            return Response({"detail": "Patient approval is required before downloading this record"}, status=status.HTTP_403_FORBIDDEN)
+            return Response({"detail": "Patient approval is required before viewing this record"}, status=status.HTTP_403_FORBIDDEN)
+        if record.encrypted_file:
+            try:
+                contents = decrypt_file(record.encrypted_file.open("rb").read())
+            except Exception:
+                return Response({"detail": "Stored medical file could not be decrypted"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return FileResponse(
+                iter([contents]),
+                content_type="application/pdf",
+                as_attachment=False,
+                filename=record.original_file_name or f"medical-record-{record.record_id}.pdf",
+            )
         if not record.uploaded_file:
-            return Response({"detail": "The original PDF is not stored for this record"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "The medical file is not available for viewing"}, status=status.HTTP_404_NOT_FOUND)
         return FileResponse(
             record.uploaded_file.open("rb"),
-            as_attachment=True,
+            content_type="application/pdf",
+            as_attachment=False,
             filename=record.uploaded_file.name.rsplit("/", 1)[-1],
         )
+
+
+class UpdateAuthorizedRecordFhirView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
+
+    def patch(self, request, record_id):
+        doctor = get_request_profile(request)
+        serializer = ClinicalResourcesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        record = Record.objects.filter(record_id=record_id, active=True).first()
+        approved = AccessRequest.objects.filter(record=record, doctor=doctor, status=AccessRequest.STATUS_APPROVED).exists() if record else False
+        hospital_member = HospitalMembership.objects.filter(
+            user=doctor,
+            role__in=[HospitalMembership.ROLE_DOCTOR, HospitalMembership.ROLE_EMERGENCY_DOCTOR, HospitalMembership.ROLE_STAFF],
+            active=True,
+        ).exists()
+        if not record or not approved or not hospital_member or not ChainService().assert_access_active(record.record_id, doctor.wallet):
+            return Response({"detail": "Approved hospital access is required to update this record"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            bundle = build_fhir_bundle(serializer.validated_data["fhir_resources"], record.patient.wallet, record.record_id)
+        except ValueError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        record.fhir_bundle = bundle
+        record.clinical_commitment = create_clinical_commitment(bundle)
+        record.commitment_algorithm = "sha256-v1"
+        record.save(update_fields=["fhir_bundle", "clinical_commitment", "commitment_algorithm"])
+        return Response(RecordSerializer(record).data)
 
 
 class CreateEmergencyAccessRequestView(APIView):
@@ -191,14 +244,29 @@ class CreateEmergencyAccessRequestView(APIView):
         if not chain.assert_doctor_can_request(record.record_id, doctor.wallet):
             return Response({"detail": "Doctor cannot request this record"}, status=status.HTTP_403_FORBIDDEN)
 
+        membership = HospitalMembership.objects.select_related("hospital").filter(
+            user=doctor,
+            role__in=[HospitalMembership.ROLE_DOCTOR, HospitalMembership.ROLE_EMERGENCY_DOCTOR],
+            active=True,
+            emergency_access=True,
+            hospital__status="active",
+        ).first()
+        if not membership:
+            return Response({"detail": "Doctor must belong to an active hospital"}, status=status.HTTP_403_FORBIDDEN)
+        policy = HospitalEmergencyPolicy.objects.filter(hospital=membership.hospital).first()
+        if policy and data.get("predicate") and data["predicate"] not in policy.allowed_predicates:
+            return Response({"detail": "Requested emergency resources are outside the hospital policy"}, status=status.HTTP_403_FORBIDDEN)
+
         request_obj = EmergencyAccessRequest.objects.create(
             record=record,
             patient=patient,
             doctor=doctor,
+            hospital=membership.hospital,
             context=data["context"],
             reason=data["reason"],
             requested_resources=data["requested_resources"],
             request_tx_hash=data.get("request_tx_hash", ""),
+            predicate=data.get("predicate", ""),
         )
         return Response(EmergencyAccessRequestSerializer(request_obj).data, status=status.HTTP_201_CREATED)
 

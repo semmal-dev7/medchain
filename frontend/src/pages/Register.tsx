@@ -25,7 +25,7 @@ export default function Register() {
       const wallet = await connectWallet();
       await register(fullName, role, wallet, signMessage);
       toast.success("Account created successfully");
-      const dashboardPath = role === "doctor" || role === "patient" ? `/${role}/dashboard` : "/";
+      const dashboardPath = role === "doctor" || role === "patient" ? `/${role}/dashboard` : role === "admin" ? "/admin/hospitals" : "/";
       navigate(dashboardPath);
     } catch (err: any) {
       toast.error(err.message || "Registration failed");
@@ -52,7 +52,7 @@ export default function Register() {
             <Activity className="h-6 w-6 text-primary" />
           </div>
           <CardTitle className="text-2xl">Create Account</CardTitle>
-          <CardDescription>Register your wallet as Patient or Doctor</CardDescription>
+          <CardDescription>Register your wallet as Patient, Doctor, or Platform Admin</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
@@ -67,6 +67,7 @@ export default function Register() {
                 <SelectContent>
                   <SelectItem value="patient">Patient</SelectItem>
                   <SelectItem value="doctor">Doctor</SelectItem>
+                  <SelectItem value="admin">Platform Admin</SelectItem>
                 </SelectContent>
               </Select>
             </div>

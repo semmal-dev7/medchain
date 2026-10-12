@@ -8,6 +8,8 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
+        ("access", "0008_move_predicate_to_emergency_request"),
+        ("users", "0002_alter_userprofile_role"),
     ]
 
     operations = [

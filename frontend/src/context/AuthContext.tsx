@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useState } from "react";
 import { authenticateWallet, clearAuthTokens, fetchMe } from "@/services/api";
+import { registerOnChain } from "@/services/api";
 
 export type UserRole = "patient" | "doctor" | "admin" | "emergency_approver";
 
@@ -7,7 +8,7 @@ export interface User {
   wallet: string;
   fullName: string;
   role: UserRole;
-  status: "active" | "suspended";
+  status: "active" | "pending" | "suspended";
 }
 
 interface AuthContextType {
@@ -54,6 +55,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       wallet: string,
       signMessage: (message: string) => Promise<string>,
     ) => {
+      if (role === "patient" || role === "doctor") {
+        await registerOnChain(role);
+      }
       const profile = await authenticateWallet(wallet, signMessage, role, fullName);
       const userData = toUser(profile);
       setUser(userData);

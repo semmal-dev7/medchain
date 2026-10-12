@@ -1,9 +1,98 @@
+import { ethers } from "ethers";
+
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
   "http://127.0.0.1:8000/api/v1";
 
 const ACCESS_TOKEN_KEY = "healthchain_access_token";
 const REFRESH_TOKEN_KEY = "healthchain_refresh_token";
+const PATIENT_PRIVACY_ADDRESS =
+  (import.meta.env.VITE_PATIENT_PRIVACY_CONTRACT as string | undefined) ||
+  "0xA67be390586868bCb295681C3A2D1a7e38601658";
+const PATIENT_PRIVACY_ABI = [
+  "function getRole(address user) view returns (uint8)",
+  "function registerPatient()",
+  "function registerDoctor()",
+  "function createRecord(string ipfsHash) returns (uint256)",
+  "function requestAccess(uint256 recordId)",
+  "function approveAccess(uint256 recordId, address doctor)",
+  "function rejectAccess(uint256 recordId, address doctor)",
+  "function revokeAccess(uint256 recordId, address doctor)",
+  "event RecordCreated(uint256 indexed recordId, address indexed patient, string ipfsHash, uint256 timestamp)",
+];
+
+const ensurePolygonAmoy = async () => {
+  if (!window.ethereum) throw new Error("MetaMask is not installed");
+  try {
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0x13882" }],
+    });
+  } catch (error: any) {
+    if (error?.code !== 4902) throw error;
+    await window.ethereum.request({
+      method: "wallet_addEthereumChain",
+      params: [{
+        chainId: "0x13882",
+        chainName: "Polygon Amoy",
+        nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
+        rpcUrls: ["https://rpc-amoy.polygon.technology"],
+        blockExplorerUrls: ["https://amoy.polygonscan.com"],
+      }],
+    });
+  }
+};
+
+const getPatientPrivacyContract = async () => {
+  if (!window.ethereum) throw new Error("MetaMask is not installed");
+  await ensurePolygonAmoy();
+  const provider = new ethers.providers.Web3Provider(window.ethereum as ethers.providers.ExternalProvider);
+  const network = await provider.getNetwork();
+  if (network.chainId !== 80002) throw new Error("MetaMask is not connected to Polygon Amoy");
+  return new ethers.Contract(PATIENT_PRIVACY_ADDRESS, PATIENT_PRIVACY_ABI, provider.getSigner());
+};
+
+const getAmoyGasOverrides = async (contract: ethers.Contract) => {
+  const provider = contract.provider;
+  const feeData = await provider.getFeeData();
+  const minimumPriorityFee = ethers.utils.parseUnits("25", "gwei");
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas?.gte(minimumPriorityFee)
+    ? feeData.maxPriorityFeePerGas
+    : minimumPriorityFee;
+  const baseFee = feeData.lastBaseFeePerGas || feeData.gasPrice || minimumPriorityFee;
+  const maxFeePerGas = baseFee.mul(2).add(maxPriorityFeePerGas);
+  return { maxPriorityFeePerGas, maxFeePerGas };
+};
+
+export const registerOnChain = async (role: "patient" | "doctor"): Promise<string> => {
+  const contract = await getPatientPrivacyContract();
+  const signer = contract.signer;
+  const address = await signer.getAddress();
+  const currentRole = Number(await contract.getRole(address));
+  const expectedRole = role === "patient" ? 1 : 2;
+  if (currentRole === expectedRole) return "";
+  if (currentRole !== 0) throw new Error("This wallet is already registered with another blockchain role");
+  const transaction = await contract[role === "patient" ? "registerPatient" : "registerDoctor"](
+    await getAmoyGasOverrides(contract),
+  );
+  const receipt = await transaction.wait();
+  return receipt.transactionHash;
+};
+
+const ensureOnChainRole = async (role: "patient" | "doctor") => {
+  const contract = await getPatientPrivacyContract();
+  const address = await contract.signer.getAddress();
+  const currentRole = Number(await contract.getRole(address));
+  const expectedRole = role === "patient" ? 1 : 2;
+  if (currentRole === expectedRole) return;
+  if (currentRole !== 0) {
+    throw new Error(`This wallet is registered on-chain as a different role. Use a ${role} wallet.`);
+  }
+  const transaction = await contract[role === "patient" ? "registerPatient" : "registerDoctor"](
+    await getAmoyGasOverrides(contract),
+  );
+  await transaction.wait();
+};
 
 export interface ApiUser {
   wallet: string;
@@ -23,6 +112,7 @@ export interface MedicalRecord {
 
 export interface AccessRequest {
   id: string;
+  recordId: number;
   doctorName: string;
   doctorWallet: string;
   status: "pending" | "approved" | "rejected" | "revoked";
@@ -59,6 +149,9 @@ export interface PatientRecord {
   ipfsHash: string;
   createdAt: string;
   hasFile: boolean;
+  fhirBundle: Record<string, unknown>;
+  clinicalCommitment: string;
+  commitmentAlgorithm: string;
 }
 
 export interface EmergencyAccessRequest {
@@ -71,6 +164,51 @@ export interface EmergencyAccessRequest {
   status: string;
   requestedAt: string;
   expiresAt?: string;
+  hospitalId?: string;
+  hospitalName?: string;
+}
+
+export interface Hospital {
+  id: string;
+  wallet: string;
+  name: string;
+  status: "active" | "suspended";
+  members: HospitalMember[];
+  emergency_policy: string[];
+}
+
+export interface HospitalMember {
+  wallet: string;
+  full_name: string;
+  role: "admin" | "doctor";
+  active: boolean;
+  emergency_access: boolean;
+}
+
+export interface HospitalEmergencyAudit {
+  request_id: string;
+  patient_wallet: string;
+  doctor_wallet: string;
+  context: string;
+  reason: string;
+  predicate: string;
+  requested_resources: string[];
+  status: string;
+  requested_at: string;
+  dispute_count: number;
+  disputes: Array<{ id: number; status: string; reason: string }>;
+}
+
+export interface DoctorHospitalRequest {
+  id: string;
+  doctor_wallet: string;
+  doctor_name: string;
+  hospital_name: string;
+  hospital_wallet: string;
+  requested_role: "doctor" | "emergency_doctor";
+  status: "pending" | "approved" | "rejected";
+  reason: string;
+  requested_at: string;
 }
 
 export interface Appointment {
@@ -218,6 +356,9 @@ export const getMyRecords = async (): Promise<PatientRecord[]> => {
     ipfsHash: row.ipfs_hash,
     createdAt: row.created_at,
     hasFile: Boolean(row.has_file),
+    fhirBundle: row.fhir_bundle || {},
+    clinicalCommitment: row.clinical_commitment || "",
+    commitmentAlgorithm: row.commitment_algorithm || "",
   }));
 };
 
@@ -247,19 +388,33 @@ export const getRecentActivity = async (): Promise<ActivityItem[]> => {
     .slice(0, 10);
 };
 
-export const uploadRecord = async (name: string, description: string, file: File): Promise<{ txHash: string }> => {
-  const txHash = `pending-${Date.now()}`;
-  const fileKey = `${file.name.replace(/\s+/g, "-").toLowerCase()}-${file.size}-${file.lastModified}`;
-  const fakeIpfs = `ipfs://${fileKey}`;
-  const recordId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+export const uploadRecord = async (
+  name: string,
+  description: string,
+  file: File,
+  fhirResources: Array<Record<string, unknown>> = [],
+): Promise<{ txHash: string }> => {
+  await ensureOnChainRole("patient");
+  const ipfsForm = new FormData();
+  ipfsForm.append("file", file);
+  const ipfs = await request("/records/ipfs/upload", { method: "POST", body: ipfsForm });
+  const ipfsHash = String(ipfs.ipfs_hash || "");
+  if (!ipfsHash.startsWith("ipfs://")) throw new Error("IPFS did not return a valid content identifier");
+  const contract = await getPatientPrivacyContract();
+  const transaction = await contract.createRecord(ipfsHash, await getAmoyGasOverrides(contract));
+  const receipt = await transaction.wait();
+  const event = receipt.events?.find((item: ethers.Event) => item.event === "RecordCreated");
+  const recordId = event?.args?.recordId?.toNumber();
+  if (recordId === undefined) throw new Error("Blockchain record creation did not return a record ID");
 
   const formData = new FormData();
   formData.append("record_id", String(recordId));
-  formData.append("ipfs_hash", fakeIpfs);
-  formData.append("encrypted_key_ref", "kms:pending");
+  formData.append("ipfs_hash", ipfsHash);
+  formData.append("encrypted_key_ref", String(ipfs.encrypted_key_ref || "ipfs-managed"));
   formData.append("name", name);
   formData.append("description", description);
-  formData.append("tx_hash", txHash);
+  formData.append("tx_hash", receipt.transactionHash);
+  formData.append("fhir_resources", JSON.stringify(fhirResources));
   formData.append("file", file);
 
   await request("/records/", {
@@ -267,8 +422,67 @@ export const uploadRecord = async (name: string, description: string, file: File
     body: formData,
   });
 
-  return { txHash };
+  return { txHash: receipt.transactionHash };
 };
+
+export const getHospitals = async (): Promise<Hospital[]> => request("/hospitals/", {}, false);
+
+export const getMyHospitals = async (): Promise<Hospital[]> => request("/hospitals/mine");
+
+export const createHospital = async (name: string, wallet: string): Promise<Hospital> =>
+  request("/hospitals/", { method: "POST", body: JSON.stringify({ name, wallet }) });
+
+export const registerHospitalDoctor = async (hospitalId: string, doctorWallet: string, role = "doctor", emergencyAccess = false) =>
+  request(`/hospitals/${hospitalId}/doctors`, {
+    method: "POST",
+    body: JSON.stringify({ doctor_wallet: doctorWallet, role, emergency_access: emergencyAccess }),
+  });
+
+export const updateHospitalDoctor = async (hospitalId: string, doctorWallet: string, changes: { role?: string; active?: boolean; emergency_access?: boolean }) =>
+  request(`/hospitals/${hospitalId}/doctors/${encodeURIComponent(doctorWallet)}`, {
+    method: "PATCH",
+    body: JSON.stringify(changes),
+  });
+
+export const removeHospitalDoctor = async (hospitalId: string, doctorWallet: string) =>
+  request(`/hospitals/${hospitalId}/doctors/${encodeURIComponent(doctorWallet)}`, { method: "DELETE" });
+
+export const revokeHospitalDoctorPermission = async (hospitalId: string, doctorWallet: string) =>
+  updateHospitalDoctor(hospitalId, doctorWallet, { active: false, emergency_access: false });
+
+export const updateHospitalPolicy = async (hospitalId: string, allowedPredicates: string[]) =>
+  request(`/hospitals/${hospitalId}/policy`, {
+    method: "PUT",
+    body: JSON.stringify({ allowed_predicates: allowedPredicates }),
+  });
+
+export const registerHospitalPatient = async (hospitalId: string, patientWallet: string, hospitalPatientId: string, administrativeNotes: string) =>
+  request(`/hospitals/${hospitalId}/patients`, {
+    method: "POST",
+    body: JSON.stringify({ patient_wallet: patientWallet, hospital_patient_id: hospitalPatientId, administrative_notes: administrativeNotes }),
+  });
+
+export const getHospitalEmergencyAudit = async (hospitalId: string): Promise<HospitalEmergencyAudit[]> =>
+  request(`/audit/hospitals/${hospitalId}/emergency`);
+
+export const getHospitalPublicAudit = async (hospitalId: string) =>
+  request(`/hospitals/${hospitalId}/public-audit`, {}, false);
+
+export const createDoctorHospitalRequest = async (hospitalWallet: string, requestedRole: "doctor" | "emergency_doctor", reason: string) =>
+  request("/hospitals/doctor-requests", { method: "POST", body: JSON.stringify({ hospital_wallet: hospitalWallet, requested_role: requestedRole, reason }) });
+
+export const getDoctorHospitalRequests = async (): Promise<DoctorHospitalRequest[]> => request("/hospitals/doctor-requests/mine");
+
+export const getHospitalDoctorRequests = async (hospitalId: string): Promise<DoctorHospitalRequest[]> => request(`/hospitals/${hospitalId}/doctor-requests`);
+
+export const reviewHospitalDoctorRequest = async (hospitalId: string, requestId: string, decision: "approve" | "reject") =>
+  request(`/hospitals/${hospitalId}/doctor-requests/${requestId}/${decision}`, { method: "POST", body: JSON.stringify({}) });
+
+export const updateHospitalDispute = async (hospitalId: string, disputeId: number, status: "investigating" | "resolved", resolution: string) =>
+  request(`/audit/hospitals/${hospitalId}/disputes/${disputeId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, resolution }),
+  });
 
 export const downloadRecord = async (recordId: number, fileName: string): Promise<void> => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
@@ -296,6 +510,7 @@ export const getAccessRequests = async (): Promise<AccessRequest[]> => {
   const rows = await request("/access/requests/incoming");
   return (rows || []).map((r: any) => ({
     id: r.id,
+    recordId: r.record_id,
     doctorName: shortWallet(r.doctor_wallet),
     doctorWallet: r.doctor_wallet,
     status: r.status,
@@ -304,6 +519,16 @@ export const getAccessRequests = async (): Promise<AccessRequest[]> => {
 };
 
 export const updateAccessStatus = async (id: string, status: "approved" | "rejected"): Promise<void> => {
+  const rows = await request("/access/requests/incoming");
+  const accessRequest = (rows || []).find((row: any) => row.id === id);
+  if (!accessRequest) throw new Error("Access request not found");
+  const contract = await getPatientPrivacyContract();
+  const transaction = await contract[status === "approved" ? "approveAccess" : "rejectAccess"](
+    accessRequest.record_id,
+    accessRequest.doctor_wallet,
+    await getAmoyGasOverrides(contract),
+  );
+  await transaction.wait();
   const action = status === "approved" ? "approve" : "reject";
   await request(`/access/requests/${id}/${action}`, {
     method: "POST",
@@ -312,6 +537,16 @@ export const updateAccessStatus = async (id: string, status: "approved" | "rejec
 };
 
 export const revokeAccess = async (id: string): Promise<void> => {
+  const rows = await request("/access/requests/incoming");
+  const accessRequest = (rows || []).find((row: any) => row.id === id);
+  if (!accessRequest) throw new Error("Access request not found");
+  const contract = await getPatientPrivacyContract();
+  const transaction = await contract.revokeAccess(
+    accessRequest.record_id,
+    accessRequest.doctor_wallet,
+    await getAmoyGasOverrides(contract),
+  );
+  await transaction.wait();
   await request(`/access/requests/${id}/revoke`, {
     method: "POST",
     body: JSON.stringify({}),
@@ -375,7 +610,20 @@ export const downloadAuthorizedRecord = async (recordId: number, fileName: strin
   URL.revokeObjectURL(url);
 };
 
+export const viewAuthorizedRecord = async (recordId: number): Promise<string> => {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const response = await fetch(`${API_BASE_URL}/access/records/${recordId}/view`, {
+    headers: token ? { Authorization: "Bearer " + token } : {},
+  });
+  if (!response.ok) {
+    const data = await parseJson(response);
+    throw new Error(data?.detail || "Failed to view approved record");
+  }
+  return URL.createObjectURL(await response.blob());
+};
+
 export const requestPatientAccess = async (patientAddress: string): Promise<void> => {
+  await ensureOnChainRole("doctor");
   const wallet = patientAddress.toLowerCase();
   const targets = await request(`/access/patient-records?wallet=${encodeURIComponent(wallet)}`);
   if (!Array.isArray(targets) || targets.length === 0) {
@@ -383,12 +631,15 @@ export const requestPatientAccess = async (patientAddress: string): Promise<void
   }
 
   const target = targets[0];
+  const contract = await getPatientPrivacyContract();
+  const transaction = await contract.requestAccess(target.record_id, await getAmoyGasOverrides(contract));
+  await transaction.wait();
   await request("/access/requests", {
     method: "POST",
     body: JSON.stringify({
       patient_wallet: wallet,
       record_id: target.record_id,
-      request_tx_hash: `pending-${Date.now()}`,
+      request_tx_hash: transaction.hash,
     }),
   });
 };
@@ -409,6 +660,7 @@ export const createEmergencyAccessRequest = async (
   context: string,
   reason: string,
   requestedResources: string[],
+  predicate = "",
 ): Promise<EmergencyAccessRequest> => {
   const row = await request("/access/emergency/requests", {
     method: "POST",
@@ -418,6 +670,7 @@ export const createEmergencyAccessRequest = async (
       context,
       reason,
       requested_resources: requestedResources,
+      predicate,
     }),
   });
   return {
@@ -430,6 +683,8 @@ export const createEmergencyAccessRequest = async (
     status: row.status,
     requestedAt: row.requested_at,
     expiresAt: row.expires_at,
+    hospitalId: row.hospital_id,
+    hospitalName: row.hospital_name,
   };
 };
 

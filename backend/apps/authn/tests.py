@@ -56,8 +56,8 @@ class AuthnServiceTests(TestCase):
             format="json",
         )
 
-        self.assertEqual(logged_in.status_code, 200)
-        self.assertEqual(logged_in.data["user"]["role"], UserProfile.ROLE_DOCTOR)
+        self.assertEqual(logged_in.status_code, 403)
+        self.assertEqual(logged_in.data["detail"], "Hospital approval required")
 
     def test_extract_siwe_nonce(self):
         message = (

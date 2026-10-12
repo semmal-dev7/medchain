@@ -14,9 +14,11 @@ class UserProfile(models.Model):
     )
 
     STATUS_ACTIVE = "active"
+    STATUS_PENDING = "pending"
     STATUS_SUSPENDED = "suspended"
     STATUS_CHOICES = (
         (STATUS_ACTIVE, "Active"),
+        (STATUS_PENDING, "Pending hospital approval"),
         (STATUS_SUSPENDED, "Suspended"),
     )
 

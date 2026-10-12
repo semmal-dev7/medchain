@@ -23,6 +23,7 @@ export default function DoctorDashboard() {
   const [emergencyDialogOpen, setEmergencyDialogOpen] = useState(false);
   const [emergencyPatient, setEmergencyPatient] = useState("");
   const [emergencyContext, setEmergencyContext] = useState("road_accident");
+  const [emergencyPredicate, setEmergencyPredicate] = useState("critical_drug_allergy");
   const [emergencyReason, setEmergencyReason] = useState("");
   const [emergencyResources, setEmergencyResources] = useState("Patient, AllergyIntolerance, MedicationStatement");
   const [emergencyRecordId, setEmergencyRecordId] = useState("");
@@ -64,6 +65,7 @@ export default function DoctorDashboard() {
         emergencyContext,
         emergencyReason,
         emergencyResources.split(",").map((resource) => resource.trim()).filter(Boolean),
+        emergencyPredicate,
       );
       toast.success("Emergency access request submitted for approval");
       setEmergencyDialogOpen(false);
@@ -151,6 +153,14 @@ export default function DoctorDashboard() {
                   <option value="cardiac_event">Cardiac event</option>
                   <option value="critical_condition">Critical condition</option>
                   <option value="other">Other</option>
+                </select>
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={emergencyPredicate} onChange={(e) => setEmergencyPredicate(e.target.value)}>
+                  <option value="critical_drug_allergy">Critical drug allergy</option>
+                  <option value="anticoagulant_use">Anticoagulant use</option>
+                  <option value="critical_medication">Critical medication</option>
+                  <option value="blood_group">Blood group</option>
+                  <option value="emergency_contraindication">Emergency contraindication</option>
+                  <option value="critical_condition">Critical condition</option>
                 </select>
                 <Input placeholder="Why is emergency access needed?" value={emergencyReason} onChange={(e) => setEmergencyReason(e.target.value)} />
                 <Input placeholder="FHIR resources, comma-separated" value={emergencyResources} onChange={(e) => setEmergencyResources(e.target.value)} />

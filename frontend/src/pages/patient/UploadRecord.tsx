@@ -12,6 +12,9 @@ import { toast } from "sonner";
 export default function UploadRecordPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [allergy, setAllergy] = useState("");
+  const [condition, setCondition] = useState("");
+  const [medication, setMedication] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
@@ -62,12 +65,20 @@ export default function UploadRecordPage() {
     setLoading(true);
     setTxHash(null);
     try {
-      const result = await uploadRecord(name, description, file);
+      const fhirResources = [
+        allergy.trim() && { resourceType: "AllergyIntolerance", code: { text: allergy.trim() } },
+        condition.trim() && { resourceType: "Condition", code: { text: condition.trim() } },
+        medication.trim() && { resourceType: "MedicationStatement", medicationCodeableConcept: { text: medication.trim() } },
+      ].filter(Boolean) as Array<Record<string, unknown>>;
+      const result = await uploadRecord(name, description, file, fhirResources);
       setTxHash(result.txHash);
       toast.success("Record uploaded successfully!");
       setName("");
       setDescription("");
       setFile(null);
+      setAllergy("");
+      setCondition("");
+      setMedication("");
       await loadRecords();
     } catch (error: any) {
       toast.error(error?.message || "Failed to upload record");
@@ -98,6 +109,15 @@ export default function UploadRecordPage() {
               <Label htmlFor="file">File</Label>
               <Input id="file" type="file" accept="application/pdf,.pdf" onChange={(e) => setFile(e.target.files?.[0] || null)} />
               <p className="text-xs text-muted-foreground">PDF files only.</p>
+            </div>
+            <div className="space-y-3 rounded-md border border-secondary/30 bg-secondary/5 p-4">
+              <div>
+                <p className="font-medium">Clinical information</p>
+                <p className="text-xs text-muted-foreground">Optional FHIR fields used to create the record commitment.</p>
+              </div>
+              <Input placeholder="Critical allergy, e.g. Penicillin" value={allergy} onChange={(e) => setAllergy(e.target.value)} />
+              <Input placeholder="Condition, e.g. Diabetes" value={condition} onChange={(e) => setCondition(e.target.value)} />
+              <Input placeholder="Medication, e.g. Metformin" value={medication} onChange={(e) => setMedication(e.target.value)} />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? (
@@ -149,6 +169,8 @@ export default function UploadRecordPage() {
                     <span>Record ID: {record.recordId}</span>
                     <span>Uploaded: {new Date(record.createdAt).toLocaleString()}</span>
                     <span className="break-all sm:col-span-2">Storage reference: {record.ipfsHash}</span>
+                    <span>FHIR resources: {Array.isArray(record.fhirBundle.entry) ? record.fhirBundle.entry.length : 0}</span>
+                    <span className="break-all sm:col-span-2">Clinical commitment: {record.clinicalCommitment || "Not generated"}</span>
                   </div>
                 </div>
               ))}

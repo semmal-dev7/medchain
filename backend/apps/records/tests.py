@@ -70,11 +70,86 @@ class RecordApiTests(TestCase):
             format="multipart",
         )
         self.assertEqual(response.status_code, 201)
+        record = Record.objects.get(record_id=1700000000000003)
+        self.assertTrue(record.encrypted_file)
+        self.assertFalse(record.uploaded_file)
 
         downloaded = self.client.get("/api/v1/records/1700000000000003/download")
 
         self.assertEqual(downloaded.status_code, 200)
         self.assertEqual(b"".join(downloaded.streaming_content), b"%PDF-1.4 private patient data")
+
+    def test_new_upload_is_not_stored_as_plaintext(self):
+        self.client.post(
+            "/api/v1/records/",
+            {
+                "record_id": 1700000000000007,
+                "ipfs_hash": "ipfs://encrypted-storage",
+                "encrypted_key_ref": "kms:record-encrypted-storage",
+                "tx_hash": "pending-encrypted-storage",
+                "file": SimpleUploadedFile("private.pdf", b"private medical data", content_type="application/pdf"),
+            },
+            format="multipart",
+        )
+        record = Record.objects.get(record_id=1700000000000007)
+        self.assertNotEqual(record.encrypted_file.read(), b"private medical data")
+
+    def test_record_stores_fhir_bundle_and_commitment(self):
+        response = self.client.post(
+            "/api/v1/records/",
+            {
+                "record_id": 1700000000000008,
+                "ipfs_hash": "ipfs://fhir-record",
+                "encrypted_key_ref": "kms:fhir-record",
+                "tx_hash": "pending-fhir-record",
+                "fhir_resources": [
+                    {"resourceType": "AllergyIntolerance", "code": {"text": "Penicillin"}},
+                    {"resourceType": "Condition", "code": {"text": "Diabetes"}},
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        record = Record.objects.get(record_id=1700000000000008)
+        self.assertEqual(record.fhir_bundle["resourceType"], "Bundle")
+        self.assertEqual(len(record.fhir_bundle["entry"]), 2)
+        self.assertTrue(record.clinical_commitment.startswith("0x"))
+        self.assertEqual(record.commitment_algorithm, "sha256-v1")
+
+    def test_multipart_fhir_resources_match_frontend_upload_payload(self):
+        response = self.client.post(
+            "/api/v1/records/",
+            {
+                "record_id": 1700000000000010,
+                "ipfs_hash": "ipfs://multipart-fhir",
+                "encrypted_key_ref": "kms:multipart-fhir",
+                "tx_hash": "pending-multipart-fhir",
+                "fhir_resources": '[{"resourceType":"AllergyIntolerance","code":{"text":"Penicillin"}}]',
+                "file": SimpleUploadedFile("clinical.pdf", b"%PDF-1.4 clinical", content_type="application/pdf"),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        record = Record.objects.get(record_id=1700000000000010)
+        self.assertEqual(len(record.fhir_bundle["entry"]), 1)
+
+    def test_record_rejects_unknown_fhir_resource_type(self):
+        response = self.client.post(
+            "/api/v1/records/",
+            {
+                "record_id": 1700000000000009,
+                "ipfs_hash": "ipfs://invalid-fhir",
+                "encrypted_key_ref": "kms:invalid-fhir",
+                "tx_hash": "pending-invalid-fhir",
+                "fhir_resources": [{"resourceType": "UnknownResource"}],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported FHIR", response.data["detail"])
 
     def test_non_pdf_upload_is_rejected(self):
         response = self.client.post(

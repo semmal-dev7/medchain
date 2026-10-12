@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.records.models import Record
+from apps.hospitals.models import Hospital, HospitalMembership
 from apps.users.models import UserProfile
 
 from .models import AccessRequest, Appointment, EmergencyAccessGrant, EmergencyAccessRequest
@@ -23,6 +24,17 @@ class EmergencyAccessRequestTests(TestCase):
         self.patient = UserProfile.objects.create(
             wallet=self.patient_wallet,
             role=UserProfile.ROLE_PATIENT,
+        )
+        self.hospital = Hospital.objects.create(
+            wallet="0x0000000000000000000000000000000000000005",
+            name="Emergency Hospital",
+            registered_by=self.patient,
+        )
+        HospitalMembership.objects.create(
+            hospital=self.hospital,
+            user=self.doctor,
+            role=HospitalMembership.ROLE_DOCTOR,
+            emergency_access=True,
         )
         self.record = Record.objects.create(
             record_id=1,
@@ -172,6 +184,22 @@ class EmergencyAccessRequestTests(TestCase):
 
         self.assertEqual(approved.status_code, 200)
         self.assertEqual(approved.data["record_id"], 1)
+
+    def test_approved_hospital_doctor_can_update_fhir_resources(self):
+        AccessRequest.objects.create(
+            record=self.record,
+            patient=self.patient,
+            doctor=self.doctor,
+            status=AccessRequest.STATUS_APPROVED,
+        )
+        response = self.client.patch(
+            "/api/v1/access/records/1/fhir",
+            {"fhir_resources": [{"resourceType": "AllergyIntolerance", "code": {"text": "Penicillin"}}]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.record.refresh_from_db()
+        self.assertEqual(self.record.fhir_bundle["entry"][0]["resource"]["resourceType"], "AllergyIntolerance")
 
     def test_patient_can_book_and_doctor_can_confirm_appointment(self):
         self.client.force_authenticate(user=self.patient_user)

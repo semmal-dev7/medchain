@@ -69,9 +69,16 @@ class VerifyView(APIView):
             profile.full_name = full_name
             profile.save(update_fields=["role", "full_name", "updated_at"])
         elif not profile:
-            profile = UserProfile.objects.create(wallet=wallet, role=role, full_name=full_name)
+            profile = UserProfile.objects.create(
+                wallet=wallet,
+                role=role,
+                full_name=full_name,
+                status=UserProfile.STATUS_PENDING if role == UserProfile.ROLE_DOCTOR else UserProfile.STATUS_ACTIVE,
+            )
         if profile.status == UserProfile.STATUS_SUSPENDED:
             return Response({"detail": "User suspended"}, status=status.HTTP_403_FORBIDDEN)
+        if profile.status == UserProfile.STATUS_PENDING and not is_registration:
+            return Response({"detail": "Hospital approval required"}, status=status.HTTP_403_FORBIDDEN)
 
         refresh = RefreshToken.for_user(user)
         nonce_obj.delete()

@@ -1,9 +1,9 @@
 {
   "_format": "hh-sol-cache-2",
   "files": {
-    "D:\\Blockchain Project\\course-project-submission-consensus_crew\\contracts\\PatientPrivacy.sol": {
-      "lastModificationDate": 1772517982765,
-      "contentHash": "923944f6217f86ccfec8bf6fe97fcaf2",
+    "D:\\Blockchain Project\\medchain\\contracts\\PatientPrivacy.sol": {
+      "lastModificationDate": 1789547388163,
+      "contentHash": "a7a2854782d4a186d012e45979e19826",
       "sourceName": "contracts/PatientPrivacy.sol",
       "solcConfig": {
         "version": "0.8.17",
@@ -34,6 +34,77 @@
       ],
       "artifacts": [
         "PatientPrivacy"
+      ]
+    },
+    "D:\\Blockchain Project\\medchain\\contracts\\EmergencyZKPortal.sol": {
+      "lastModificationDate": 1791043506757,
+      "contentHash": "acaac4c0972c17344477575ecc22c8dc",
+      "sourceName": "contracts/EmergencyZKPortal.sol",
+      "solcConfig": {
+        "version": "0.8.17",
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.17"
+      ],
+      "artifacts": [
+        "EmergencyZKPortal",
+        "IGroth16Verifier"
+      ]
+    },
+    "D:\\Blockchain Project\\medchain\\contracts\\mocks\\MockGroth16Verifier.sol": {
+      "lastModificationDate": 1791043506839,
+      "contentHash": "060a447fa0747cfd1555e0c38a4f86c8",
+      "sourceName": "contracts/mocks/MockGroth16Verifier.sol",
+      "solcConfig": {
+        "version": "0.8.17",
+        "settings": {
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.17"
+      ],
+      "artifacts": [
+        "MockGroth16Verifier"
       ]
     }
   }

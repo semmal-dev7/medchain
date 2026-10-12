@@ -39,6 +39,8 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
     patient_wallet = serializers.CharField(source="patient.wallet", read_only=True)
     doctor_wallet = serializers.CharField(source="doctor.wallet", read_only=True)
     record_id = serializers.IntegerField(source="record.record_id", read_only=True)
+    hospital_id = serializers.UUIDField(source="hospital.id", read_only=True, allow_null=True)
+    hospital_name = serializers.CharField(source="hospital.name", read_only=True, allow_null=True)
 
     class Meta:
         model = EmergencyAccessRequest
@@ -47,6 +49,8 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
             "record_id",
             "patient_wallet",
             "doctor_wallet",
+            "hospital_id",
+            "hospital_name",
             "context",
             "reason",
             "requested_resources",
@@ -55,6 +59,7 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
             "approved_at",
             "expires_at",
             "request_tx_hash",
+            "predicate",
         )
 
 
@@ -68,6 +73,11 @@ class CreateEmergencyAccessRequestSerializer(serializers.Serializer):
         allow_empty=False,
     )
     request_tx_hash = serializers.CharField(required=False, allow_blank=True, max_length=66)
+    predicate = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+
+class ClinicalResourcesSerializer(serializers.Serializer):
+    fhir_resources = serializers.ListField(child=serializers.DictField(), allow_empty=True)
 
 
 class EmergencyAccessGrantSerializer(serializers.ModelSerializer):

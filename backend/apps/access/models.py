@@ -3,6 +3,7 @@ import uuid
 from django.db import models
 
 from apps.records.models import Record
+from apps.hospitals.models import Hospital
 from apps.users.models import UserProfile
 
 
@@ -65,6 +66,7 @@ class EmergencyAccessRequest(models.Model):
     record = models.ForeignKey(Record, on_delete=models.CASCADE, related_name="emergency_requests")
     patient = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name="emergency_requests_received")
     doctor = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name="emergency_requests_created")
+    hospital = models.ForeignKey(Hospital, on_delete=models.PROTECT, null=True, blank=True, related_name="emergency_requests")
     context = models.CharField(max_length=32, choices=CONTEXT_CHOICES)
     reason = models.TextField()
     requested_resources = models.JSONField(default=list)
@@ -73,6 +75,7 @@ class EmergencyAccessRequest(models.Model):
     approved_at = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True)
     request_tx_hash = models.CharField(max_length=66, blank=True, default="")
+    predicate = models.CharField(max_length=64, blank=True, default="")
 
     class Meta:
         indexes = [

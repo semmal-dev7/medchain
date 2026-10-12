@@ -24,6 +24,7 @@ import {
   Users,
   History,
   LogOut,
+  Building2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -46,13 +47,17 @@ const doctorNav = [
   { title: "Access History", url: "/doctor/history", icon: History },
 ];
 
+const adminNav = [
+  { title: "Hospital Dashboard", url: "/admin/dashboard", icon: LayoutDashboard },
+];
+
 export function AppSidebar() {
   const { user, logout } = useAuth();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const navigate = useNavigate();
 
-  const navItems = user?.role === "doctor" ? doctorNav : patientNav;
+  const navItems = user?.role === "doctor" ? doctorNav : user?.role === "admin" ? adminNav : patientNav;
 
   const handleLogout = () => {
     logout();
