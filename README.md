@@ -357,6 +357,15 @@ Work in this order:
 - Network: Polygon Amoy, chain ID `80002` (`0x13882`).
 - PatientPrivacy:
   `0xA67be390586868bCb295681C3A2D1a7e38601658`.
+- Public on-chain activity: open `/transactions` in the frontend for an event
+  ledger of wallets interacting with the PatientPrivacy contract. It reads
+  Polygon Amoy logs in 10,000-block pages; use the optional
+  `VITE_PATIENT_PRIVACY_DEPLOYMENT_BLOCK` to set the deployment block and
+  `VITE_POLYGON_AMOY_RPC_URL` to select a public RPC provider. The explorer link
+  provides the full transaction history. Contract events and transaction inputs
+  are public and permanent. The current `RecordCreated` event includes the IPFS
+  hash, so referenced files must remain encrypted and the hash should be treated
+  as sensitive metadata.
 - Development MockGroth16Verifier:
   `0x0Df2430Ef67495971806b672D6E066851bc1b2B8`.
 - Development EmergencyZKPortal:

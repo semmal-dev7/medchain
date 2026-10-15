@@ -25,6 +25,7 @@ import {
   History,
   LogOut,
   Building2,
+  Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -33,6 +34,7 @@ const patientNav = [
   { title: "Medical Records", url: "/patient/records", icon: FileHeart },
   { title: "Consent Governance", url: "/patient/access", icon: ShieldCheck },
   { title: "Access History", url: "/patient/history", icon: History },
+  { title: "Public Transactions", url: "/transactions", icon: Activity },
   { title: "Appointments", url: "/patient/appointments", icon: CalendarDays },
   { title: "Prescriptions", url: "/patient/prescriptions", icon: Pill },
 ];
@@ -47,10 +49,12 @@ const doctorNav = [
   { title: "Emergency Records", url: "/doctor/emergency-records", icon: FileHeart },
   { title: "Emergency Approvals", url: "/doctor/emergency-approvals", icon: ShieldCheck },
   { title: "Access History", url: "/doctor/history", icon: History },
+  { title: "Public Transactions", url: "/transactions", icon: Activity },
 ];
 
 const adminNav = [
   { title: "Hospital Dashboard", url: "/admin/dashboard", icon: LayoutDashboard },
+  { title: "Public Transactions", url: "/transactions", icon: Activity },
 ];
 
 export function AppSidebar() {

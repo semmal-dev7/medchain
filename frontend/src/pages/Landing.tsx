@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Shield, Database, FileKey, KeyRound, Siren } from "lucide-react";
+import { Shield, Database, FileKey, KeyRound, Siren, Activity } from "lucide-react";
 
 const features = [
   {
@@ -43,6 +43,10 @@ export default function Landing() {
             <span className="text-xl font-bold text-primary">MedChain</span>
           </div>
           <div className="flex items-center gap-3">
+            <Button variant="outline" onClick={() => navigate("/transactions")}>
+              <Activity className="mr-2 h-4 w-4" />
+              Public Transactions
+            </Button>
             <Button onClick={() => navigate("/register")}>Get Started</Button>
           </div>
         </div>

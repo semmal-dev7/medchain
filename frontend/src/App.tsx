@@ -32,6 +32,7 @@ import DoctorEmergencyRecords from "@/pages/doctor/DoctorEmergencyRecords";
 import DoctorAccessHistory from "@/pages/doctor/DoctorAccessHistory";
 import EmergencyApproverDashboard from "@/pages/emergency/EmergencyApproverDashboard";
 import HospitalDashboard from "@/pages/admin/HospitalDashboard";
+import PublicTransactions from "@/pages/PublicTransactions";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -55,6 +56,7 @@ const App = () => (
               <Route path="/hospital/login" element={<HospitalLogin />} />
               <Route path="/doctor/login" element={<DoctorLogin />} />
               <Route path="/doctor/pending" element={<DoctorPending />} />
+              <Route path="/transactions" element={<PublicTransactions />} />
 
               {/* Patient */}
               <Route path="/patient" element={<ProtectedRoute role="patient"><DashboardLayout /></ProtectedRoute>}>
