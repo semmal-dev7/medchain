@@ -111,6 +111,33 @@ The hospital dashboard intentionally contains only:
 
 Hospital registration remains a separate flow. Patient records, private policies, and unrestricted medical data are not displayed in the dashboard.
 
+### Public network ledger
+
+1. Open `/transactions` from the public landing page or a signed-in role's
+   sidebar. The page is public and does not require wallet authentication.
+2. The frontend reads logs directly from the configured MedChain
+   `PatientPrivacy` contract on Polygon Amoy (chain ID `80002`). It tries
+   `VITE_POLYGON_AMOY_RPC_URL` first when configured, then falls back to public
+   Polygon Amoy RPC endpoints.
+3. The initial query scans the newest 10,000 blocks. Use **Load older events**
+   to continue backward through history. Set
+   `VITE_PATIENT_PRIVACY_DEPLOYMENT_BLOCK` to stop scanning at the contract's
+   deployment block rather than block zero.
+4. While the page remains open, it checks for newly confirmed contract events
+   every 30 seconds. The page fetches historical/current records from Polygon;
+   it does not store a separate server-side ledger.
+5. Filter loaded events by a participant wallet address. Each row links to the
+   transaction on PolygonScan.
+
+The ledger displays the supported `PatientPrivacy` events for patient/doctor
+registration, user suspension, record creation, access requests, approvals,
+rejections, and revocations. It is an event ledger for this contract, not a
+complete index of all Polygon transactions: reverted transactions, calls that
+emit no supported event, and backend-only actions are not included. The current
+`RecordCreated` event publishes an IPFS hash; keep the referenced file
+encrypted and treat the hash as sensitive metadata. Never submit patient names
+or medical details in transaction inputs.
+
 ## Project Structure
 
 - `contracts/PatientPrivacy.sol` - patient roles, records, consent, and access lifecycle.
