@@ -60,6 +60,8 @@ When a patient is unconscious or unable to provide normal consent:
 
 1. The doctor identifies the patient using the available prototype identifier.
 2. The backend verifies that the doctor is registered and actively affiliated with a participating hospital.
+   A hospital admin must also explicitly enable emergency access for that doctor in
+   the Hospital Dashboard; this authorization is separate from committee membership.
 3. The doctor requests a narrowly defined emergency predicate, such as critical drug allergy, anticoagulant use, blood group, critical medication, or emergency contraindication.
 4. The hospital policy determines which predicate categories are allowed.
 5. The intended ZK prover checks commitment consistency and the selected predicate using private clinical data.
@@ -143,14 +145,15 @@ python manage.py runserver 127.0.0.1:8000
 Configure encrypted IPFS uploads before using patient record upload:
 
 ```env
-IPFS_API_URL=http://127.0.0.1:5001
+IPFS_API_URL=https://api.pinata.cloud/pinning/pinFileToIPFS
+IPFS_API_TOKEN=<restricted Pinata JWT>
 ```
 
-The endpoint must expose the IPFS HTTP API. The backend encrypts the PDF before
-uploading it with `/api/v0/add?pin=true`, returns the resulting CID, and uses
-that CID in the Polygon record transaction. If `IPFS_API_URL` is missing or
-unreachable, the upload fails explicitly; the application does not create a
-fake `ipfs://` value.
+For local Kubo, use `http://127.0.0.1:5001/api/v0/add?pin=true`; omit the token
+when authentication is disabled. Pinata JWTs must include `pinFileToIPFS`.
+The backend encrypts PDFs before upload and uses the real CID in the Polygon
+record transaction. Missing credentials, rejected uploads, or unreachable
+providers fail explicitly; the app does not create a fake CID.
 
 ### Frontend
 
@@ -176,6 +179,9 @@ Wallet signatures use a single-use nonce that expires after ten minutes. A docto
 
 ## Project Status
 
+> Historical status snapshot. For current completed work, deployment state, and
+> remaining tasks, use the authoritative continuation handoff below.
+
 ### Completed
 
 - Defined the decentralized patient privacy and medical-record access architecture.
@@ -193,7 +199,7 @@ Wallet signatures use a single-use nonce that expires after ten minutes. A docto
 - Verified the Django configuration with `python manage.py check`.
 - Verified the frontend with a successful Vite production build.
 
-### Partially completed
+### Partially completed (historical snapshot)
 
 - The contract and backend workflows exist, but some frontend actions still use backend APIs rather than real wallet-signed blockchain write transactions.
 - IPFS integration for encrypted medical files is planned; the current prototype uses backend encrypted storage and some provisional IPFS-style values.
@@ -334,8 +340,15 @@ Work in this order:
   must have `pinFileToIPFS` permission.
 - Doctor approved-record viewing is read-only in the UI; the doctor download
   endpoint returns HTTP 403.
-- Emergency backend approval threshold is currently two distinct approvals,
-  grants expire after 30 minutes, and only requested resources are disclosed.
+- Emergency approvals are hospital-scoped: requesters select three active,
+  emergency-authorized doctors from their hospital for each request. Hospital
+  emergency authorization is sufficient; a separate `emergency_doctor` role
+  is not required. Only
+  those doctors can see or decide it; two distinct approvals are required
+  within 30 minutes. Grants last 30 minutes and invalidate on membership
+  revocation. The separate Emergency Records page displays the full uploaded
+  PDF for the approved record to the requesting doctor only while the grant is
+  valid; requested resource types remain part of the approval/audit context.
 - Hardhat tests, Django tests, Django system checks, and Vite production
   builds have passed during development.
 
@@ -357,22 +370,33 @@ Work in this order:
 
 ### Emergency access and ZKP truth
 
-Implemented emergency foundation:
+Implemented emergency policy and foundation:
 
 - Hospital authorization and configurable emergency predicate names.
 - Emergency request creation with context, reason, predicate, and requested
   resources.
-- Distinct approval records, current two-approval backend threshold, 30-minute
-  temporary grants, expiry, minimum-disclosure filtering, and audit data.
+- A hospital may maintain a pool of active doctors with emergency access
+  enabled. This hospital approval is sufficient; a separate
+  `emergency_doctor` role is not required. The requester selects exactly three
+  from one hospital for each request; only those three can see and decide it.
+- Two-of-three distinct approvals, a 30-minute approval deadline, immediate
+  closure after a selected approver rejects, expiry, audit data, and 30-minute
+  temporary grants. The doctor's separate Emergency Records page streams the
+  approved record's full uploaded PDF only to the requesting doctor while the
+  grant is valid.
+- The requesting doctor cannot approve or reject their own request. Inactive or
+  unselected users cannot decide. Decisions lock the request and hospital
+  rows to prevent concurrent threshold races.
 - `EmergencyZKPortal.sol` commitment registration and Groth16-shaped verifier
   boundary.
 
-Intended policy:
+Enforced policy:
 
-- Exactly three eligible hospital approvers per committee.
-- Two different approvals out of those three are required.
+- Exactly three selected eligible hospital approvers per request.
+- Only the selected three receive the request; two different approvals out
+  of those three are required.
 - Duplicate, self, inactive, unauthorized, late, and post-rejection approvals
-  must be rejected.
+  are rejected.
 
 Not yet complete:
 
@@ -399,15 +423,25 @@ production security claim.
 4. Confirm doctor download remains HTTP 403.
 5. Confirm MetaMask network switching and the 25 gwei Amoy fee path.
 
-#### Phase 2: Finish emergency threshold behavior
+#### Phase 2: Emergency approval policy - complete
 
-6. Define a three-approver committee for each hospital.
-7. Permit decisions only from active emergency approvers in that committee.
-8. Enforce 2-of-3 approval, unique approvers, no self-approval, and no
-   decisions after rejection or expiry.
-9. Connect approval to grant issuance and test expiry, revocation, and
-   minimum-disclosure resources.
-10. Complete emergency request, approval, disclosure, and audit screens.
+6. Hospital-approved emergency doctors form the eligible pool. The requester
+   selects exactly three active emergency-authorized colleagues from one
+   hospital for the request.
+7. Two of those three selected doctors must approve within 30 minutes. The
+   requester cannot approve or reject their own request; one selected-doctor
+   rejection closes it.
+8. Inactive, unauthorized, duplicate, late, expired, and post-rejection
+   decisions are blocked. Requests are visible only to their three selected
+   approvers while those doctors remain eligible at that hospital.
+9. Grant issuance rechecks selected-approver votes and the requesting doctor's
+   current hospital authorization. Revoking that authorization invalidates the
+   grant. Hospital admins can enable or revoke emergency access from the
+   Hospital Dashboard; this authorization is sufficient for approver
+   eligibility without a separate emergency-doctor role.
+10. The doctor interface includes an Emergency Approvals page. Backend
+    threshold, membership, deadline, rejection, grant, and revocation behavior
+    has targeted tests. A live workflow with real accounts is still required.
 
 #### Phase 3: Implement real ZKP
 

@@ -1,4 +1,5 @@
 from django.utils import timezone
+from django.db import transaction
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -121,14 +122,29 @@ class HospitalPublicAuditView(APIView):
 class HospitalDoctorRegistrationView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsHospitalAdmin]
 
-    def post(self, request, hospital_id):
+    def get(self, request, hospital_id):
         hospital = Hospital.objects.filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
+        self.hospital = hospital
+        if not hospital or not IsHospitalAdmin().has_permission(request, self):
+            return Response({"detail": "Hospital not found or admin access required"}, status=status.HTTP_403_FORBIDDEN)
+        memberships = HospitalMembership.objects.filter(
+            hospital=hospital,
+            user__role=UserProfile.ROLE_DOCTOR,
+        ).select_related("user").order_by("user__full_name", "user__wallet")
+        return Response(HospitalMembershipSerializer(memberships, many=True).data)
+
+    @transaction.atomic
+    def post(self, request, hospital_id):
+        hospital = Hospital.objects.select_for_update().filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
         self.hospital = hospital
         if not hospital or not IsHospitalAdmin().has_permission(request, self):
             return Response({"detail": "Hospital not found or admin access required"}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = RegisterDoctorSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if serializer.validated_data["role"] == HospitalMembership.ROLE_EMERGENCY_DOCTOR:
+            if not serializer.validated_data["emergency_access"]:
+                return Response({"detail": "Emergency doctors must have emergency access enabled."}, status=status.HTTP_400_BAD_REQUEST)
         doctor = UserProfile.objects.get(wallet=serializer.validated_data["doctor_wallet"])
         existing = HospitalMembership.objects.filter(hospital=hospital, user=doctor).first()
         if existing:
@@ -193,8 +209,9 @@ class HospitalDoctorRequestsView(APIView):
 class ReviewHospitalDoctorRequestView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsHospitalAdmin]
 
+    @transaction.atomic
     def post(self, request, hospital_id, request_id, decision):
-        hospital = Hospital.objects.filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
+        hospital = Hospital.objects.select_for_update().filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
         self.hospital = hospital
         if not hospital or not IsHospitalAdmin().has_permission(request, self):
             return Response({"detail": "Hospital admin access required"}, status=status.HTTP_403_FORBIDDEN)
@@ -229,25 +246,33 @@ class HospitalDoctorDetailView(APIView):
     def get_hospital(self, hospital_id):
         return Hospital.objects.filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
 
+    @transaction.atomic
     def patch(self, request, hospital_id, doctor_wallet):
-        hospital = self.get_hospital(hospital_id)
+        hospital = Hospital.objects.select_for_update().filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
         self.hospital = hospital
         if not hospital:
             return Response({"detail": "Hospital not found"}, status=status.HTTP_404_NOT_FOUND)
         membership = HospitalMembership.objects.filter(hospital=hospital, user_id=doctor_wallet.lower()).first()
         if not membership:
             return Response({"detail": "Hospital member not found"}, status=status.HTTP_404_NOT_FOUND)
+        if "role" in request.data and request.data["role"] not in dict(HospitalMembership.ROLE_CHOICES):
+            return Response({"detail": "Unsupported hospital role"}, status=status.HTTP_400_BAD_REQUEST)
+        if "emergency_access" in request.data and not isinstance(request.data["emergency_access"], bool):
+            return Response({"detail": "emergency_access must be a boolean"}, status=status.HTTP_400_BAD_REQUEST)
+        if "active" in request.data and not isinstance(request.data["active"], bool):
+            return Response({"detail": "active must be a boolean"}, status=status.HTTP_400_BAD_REQUEST)
         if "active" in request.data:
-            membership.active = bool(request.data["active"])
+            membership.active = request.data["active"]
         if "emergency_access" in request.data:
-            membership.emergency_access = bool(request.data["emergency_access"])
-        if "role" in request.data and request.data["role"] in dict(HospitalMembership.ROLE_CHOICES):
+            membership.emergency_access = request.data["emergency_access"]
+        if "role" in request.data:
             membership.role = request.data["role"]
         membership.save(update_fields=["active", "emergency_access", "role"])
         return Response(HospitalMembershipSerializer(membership).data)
 
+    @transaction.atomic
     def delete(self, request, hospital_id, doctor_wallet):
-        hospital = self.get_hospital(hospital_id)
+        hospital = Hospital.objects.select_for_update().filter(id=hospital_id, status=Hospital.STATUS_ACTIVE).first()
         self.hospital = hospital
         if not hospital:
             return Response({"detail": "Hospital not found"}, status=status.HTTP_404_NOT_FOUND)

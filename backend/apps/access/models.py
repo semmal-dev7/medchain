@@ -76,6 +76,11 @@ class EmergencyAccessRequest(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     request_tx_hash = models.CharField(max_length=66, blank=True, default="")
     predicate = models.CharField(max_length=64, blank=True, default="")
+    selected_approvers = models.ManyToManyField(
+        UserProfile,
+        through="EmergencyRequestApprover",
+        related_name="emergency_requests_to_review",
+    )
 
     class Meta:
         indexes = [
@@ -85,6 +90,24 @@ class EmergencyAccessRequest(models.Model):
 
     def __str__(self):
         return f"emergency:{self.id} {self.status}"
+
+
+class EmergencyRequestApprover(models.Model):
+    request = models.ForeignKey(
+        EmergencyAccessRequest,
+        on_delete=models.CASCADE,
+        related_name="approver_assignments",
+    )
+    approver = models.ForeignKey(
+        UserProfile,
+        on_delete=models.CASCADE,
+        related_name="emergency_request_assignments",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["request", "approver"], name="unique_emergency_request_approver_assignment"),
+        ]
 
 
 class EmergencyAccessGrant(models.Model):

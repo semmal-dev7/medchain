@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
-import { createEmergencyAccessRequest, getApprovedPatients, getDoctorAccessHistory, getPatientRecordTargets, requestPatientAccess, PatientInfo, ActivityItem, PatientRecordTarget } from "@/services/api";
+import { createEmergencyAccessRequest, getApprovedPatients, getDoctorAccessHistory, getEligibleEmergencyApprovers, getPatientRecordTargets, requestPatientAccess, PatientInfo, ActivityItem, EmergencyApproverHospital, PatientRecordTarget } from "@/services/api";
 import { CalendarDays, CheckCircle2, Clock3, FileHeart, History, Loader2, Search, ShieldAlert, Siren, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
@@ -29,6 +29,10 @@ export default function DoctorDashboard() {
   const [emergencyRecordId, setEmergencyRecordId] = useState("");
   const [emergencyRecords, setEmergencyRecords] = useState<PatientRecordTarget[]>([]);
   const [loadingEmergencyRecords, setLoadingEmergencyRecords] = useState(false);
+  const [eligibleEmergencyHospitals, setEligibleEmergencyHospitals] = useState<EmergencyApproverHospital[]>([]);
+  const [selectedEmergencyHospital, setSelectedEmergencyHospital] = useState("");
+  const [selectedEmergencyApprovers, setSelectedEmergencyApprovers] = useState<string[]>([]);
+  const [loadingEmergencyApprovers, setLoadingEmergencyApprovers] = useState(false);
   const [emergencyRequesting, setEmergencyRequesting] = useState(false);
   const { user } = useAuth();
 
@@ -57,11 +61,21 @@ export default function DoctorDashboard() {
       toast.error("Enter the patient wallet, choose a patient record, and provide the emergency reason");
       return;
     }
+    if (emergencyReason.trim().length < 10) {
+      toast.error("Please explain the emergency in at least 10 characters");
+      return;
+    }
+    if (!selectedEmergencyHospital || selectedEmergencyApprovers.length !== 3) {
+      toast.error("Select a hospital and exactly three emergency doctors");
+      return;
+    }
     setEmergencyRequesting(true);
     try {
       await createEmergencyAccessRequest(
         emergencyPatient,
         Number(emergencyRecordId),
+        selectedEmergencyHospital,
+        selectedEmergencyApprovers,
         emergencyContext,
         emergencyReason,
         emergencyResources.split(",").map((resource) => resource.trim()).filter(Boolean),
@@ -70,11 +84,45 @@ export default function DoctorDashboard() {
       toast.success("Emergency access request submitted for approval");
       setEmergencyDialogOpen(false);
       setEmergencyReason("");
+      setSelectedEmergencyApprovers([]);
     } catch (error: any) {
       toast.error(error?.message || "Emergency request failed");
     } finally {
       setEmergencyRequesting(false);
     }
+  };
+
+  const loadEligibleEmergencyDoctors = async () => {
+    setLoadingEmergencyApprovers(true);
+    setSelectedEmergencyApprovers([]);
+    try {
+      const hospitals = await getEligibleEmergencyApprovers();
+      setEligibleEmergencyHospitals(hospitals);
+      setSelectedEmergencyHospital((current) =>
+        hospitals.some((hospital) => hospital.id === current) ? current : hospitals[0]?.id || "",
+      );
+      if (!hospitals.length) {
+        toast.error(
+          "No eligible hospital: your hospital must enable emergency access for you and designate three other active doctors as emergency approvers. If you are one of only three doctors, a fourth doctor is needed.",
+        );
+      }
+    } catch (error: any) {
+      toast.error(error?.message || "Could not load emergency doctors");
+    } finally {
+      setLoadingEmergencyApprovers(false);
+    }
+  };
+
+  const openEmergencyRequestDialog = () => {
+    setEmergencyDialogOpen(true);
+    void loadEligibleEmergencyDoctors();
+  };
+
+  const toggleEmergencyApprover = (wallet: string, checked: boolean) => {
+    setSelectedEmergencyApprovers((selected) => {
+      if (checked) return selected.length < 3 ? [...selected, wallet] : selected;
+      return selected.filter((address) => address !== wallet);
+    });
   };
 
   const loadEmergencyRecords = async () => {
@@ -133,16 +181,37 @@ export default function DoctorDashboard() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <Dialog open={emergencyDialogOpen} onOpenChange={setEmergencyDialogOpen}>
+          <Dialog open={emergencyDialogOpen} onOpenChange={(open) => open ? openEmergencyRequestDialog() : setEmergencyDialogOpen(false)}>
             <DialogTrigger asChild>
               <Button variant="destructive"><Siren className="mr-2 h-4 w-4" />Request Emergency Access</Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Request Emergency Access</DialogTitle>
-                <DialogDescription>Request only the minimum patient information needed for the emergency. This request requires approval.</DialogDescription>
+                <DialogDescription>Select three active emergency doctors from your hospital. Only they receive this request; two must approve within 30 minutes.</DialogDescription>
               </DialogHeader>
               <div className="space-y-3">
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedEmergencyHospital} onChange={(event) => { setSelectedEmergencyHospital(event.target.value); setSelectedEmergencyApprovers([]); }} disabled={loadingEmergencyApprovers || !eligibleEmergencyHospitals.length}>
+                  <option value="">{loadingEmergencyApprovers ? "Loading hospitals..." : eligibleEmergencyHospitals.length ? "Choose a hospital" : "No eligible hospital available"}</option>
+                  {eligibleEmergencyHospitals.map((hospital) => <option key={hospital.id} value={hospital.id}>{hospital.name} · {hospital.wallet}</option>)}
+                </select>
+                {eligibleEmergencyHospitals.find((hospital) => hospital.id === selectedEmergencyHospital) && (
+                  <fieldset className="space-y-2 rounded-md border p-3">
+                    <legend className="px-1 text-sm font-medium">Select 3 approvers by wallet address ({selectedEmergencyApprovers.length}/3)</legend>
+                    {eligibleEmergencyHospitals.find((hospital) => hospital.id === selectedEmergencyHospital)?.doctors.map((doctor) => (
+                      <label key={doctor.wallet} className="flex cursor-pointer items-start gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="mt-1 accent-primary"
+                          checked={selectedEmergencyApprovers.includes(doctor.wallet)}
+                          disabled={!selectedEmergencyApprovers.includes(doctor.wallet) && selectedEmergencyApprovers.length >= 3}
+                          onChange={(event) => toggleEmergencyApprover(doctor.wallet, event.target.checked)}
+                        />
+                        <span className="min-w-0"><span className="block font-medium">{doctor.fullName || "Emergency doctor"}</span><span className="break-all font-mono text-xs text-muted-foreground">{doctor.wallet}</span></span>
+                      </label>
+                    ))}
+                  </fieldset>
+                )}
                 <div className="flex gap-2"><Input placeholder="Patient wallet 0x..." value={emergencyPatient} onChange={(e) => setEmergencyPatient(e.target.value)} onBlur={loadEmergencyRecords} /><Button type="button" variant="outline" onClick={loadEmergencyRecords} disabled={loadingEmergencyRecords}>{loadingEmergencyRecords ? <Loader2 className="h-4 w-4 animate-spin" /> : "Load records"}</Button></div>
                 <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={emergencyRecordId} onChange={(e) => setEmergencyRecordId(e.target.value)} disabled={loadingEmergencyRecords || !emergencyRecords.length}>
                   <option value="">{loadingEmergencyRecords ? "Loading patient records..." : emergencyRecords.length ? "Choose the record needed for this emergency" : "Load a patient wallet's records first"}</option>
@@ -162,12 +231,15 @@ export default function DoctorDashboard() {
                   <option value="emergency_contraindication">Emergency contraindication</option>
                   <option value="critical_condition">Critical condition</option>
                 </select>
-                <Input placeholder="Why is emergency access needed?" value={emergencyReason} onChange={(e) => setEmergencyReason(e.target.value)} />
+                <div className="space-y-1">
+                  <Input placeholder="Why is emergency access needed? (at least 10 characters)" value={emergencyReason} onChange={(e) => setEmergencyReason(e.target.value)} minLength={10} />
+                  <p className="text-xs text-muted-foreground">Provide at least 10 characters describing why this access is needed.</p>
+                </div>
                 <Input placeholder="FHIR resources, comma-separated" value={emergencyResources} onChange={(e) => setEmergencyResources(e.target.value)} />
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEmergencyDialogOpen(false)}>Cancel</Button>
-                <Button variant="destructive" onClick={handleEmergencyRequest} disabled={emergencyRequesting}>
+                <Button variant="destructive" onClick={handleEmergencyRequest} disabled={emergencyRequesting || selectedEmergencyApprovers.length !== 3}>
                   {emergencyRequesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Submit for Approval
                 </Button>
@@ -184,7 +256,7 @@ export default function DoctorDashboard() {
             <h2 className="text-2xl font-bold text-foreground">Clinical Overview - {user?.fullName || "Doctor"}</h2>
             <p className="mt-1 text-sm text-muted-foreground">Verified medical workspace</p>
           </div>
-          <Button variant="destructive" onClick={() => setEmergencyDialogOpen(true)}><ShieldAlert className="mr-2 h-4 w-4" />Request Emergency Access</Button>
+          <Button variant="destructive" onClick={openEmergencyRequestDialog}><ShieldAlert className="mr-2 h-4 w-4" />Request Emergency Access</Button>
         </CardContent>
       </Card>
 

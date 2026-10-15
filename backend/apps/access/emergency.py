@@ -4,6 +4,9 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from apps.hospitals.models import HospitalMembership
+from apps.users.models import UserProfile
+
 from .models import EmergencyAccessGrant, EmergencyAccessRequest
 
 TEMPORARY_ACCESS_MINUTES = 30
@@ -46,5 +49,17 @@ def validate_temporary_grant(token: str) -> EmergencyAccessGrant | None:
             grant.request.save(update_fields=["status"])
         return None
     if grant.request.status != EmergencyAccessRequest.STATUS_APPROVED:
+        return None
+    if not grant.request.hospital or grant.request.hospital.status != "active":
+        return None
+    if grant.request.doctor.status != UserProfile.STATUS_ACTIVE:
+        return None
+    if not HospitalMembership.objects.filter(
+        hospital=grant.request.hospital,
+        user=grant.request.doctor,
+        active=True,
+        emergency_access=True,
+        hospital__status="active",
+    ).exists():
         return None
     return grant

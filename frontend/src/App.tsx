@@ -28,6 +28,7 @@ import DoctorRecords from "@/pages/doctor/DoctorRecords";
 import DoctorAppointments from "@/pages/doctor/DoctorAppointments";
 import DoctorPrescriptions from "@/pages/doctor/DoctorPrescriptions";
 import DoctorEmergencyAccess from "@/pages/doctor/DoctorEmergencyAccess";
+import DoctorEmergencyRecords from "@/pages/doctor/DoctorEmergencyRecords";
 import DoctorAccessHistory from "@/pages/doctor/DoctorAccessHistory";
 import EmergencyApproverDashboard from "@/pages/emergency/EmergencyApproverDashboard";
 import HospitalDashboard from "@/pages/admin/HospitalDashboard";
@@ -76,6 +77,8 @@ const App = () => (
                 <Route path="appointments" element={<DoctorAppointments />} />
                 <Route path="prescriptions" element={<DoctorPrescriptions />} />
                 <Route path="emergency" element={<DoctorEmergencyAccess />} />
+                <Route path="emergency-records" element={<DoctorEmergencyRecords />} />
+                <Route path="emergency-approvals" element={<EmergencyApproverDashboard />} />
                 <Route path="history" element={<DoctorAccessHistory />} />
               </Route>
 

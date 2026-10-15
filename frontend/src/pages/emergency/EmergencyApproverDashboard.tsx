@@ -28,7 +28,9 @@ export default function EmergencyApproverDashboard() {
     setActionId(id);
     try {
       const result = await decideEmergencyRequest(id, decision);
-      toast.success(decision === "approve" ? `Approval recorded (${result.approval_count}/2)` : "Emergency request rejected");
+      toast.success(decision === "approve"
+        ? `Approval recorded (${result.approval_count}/${result.committee_size}; ${result.threshold} required)`
+        : "Emergency request rejected");
       await loadRequests();
     } catch (error: any) {
       toast.error(error?.message || "Could not record decision");
@@ -41,7 +43,7 @@ export default function EmergencyApproverDashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-foreground">Emergency Approvals</h1>
-        <p className="text-sm text-muted-foreground">Two distinct approvers are required before temporary access can be issued.</p>
+        <p className="text-sm text-muted-foreground">Each request is sent only to the three emergency doctors selected by the requester. Two of those three must approve within 30 minutes; one rejection closes the request.</p>
       </div>
       {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : requests.length === 0 ? (
         <Card><CardContent className="p-6 text-sm text-muted-foreground">No emergency requests are waiting for review.</CardContent></Card>
@@ -51,6 +53,7 @@ export default function EmergencyApproverDashboard() {
             <div>
               <CardTitle className="text-lg">{request.context.replaceAll("_", " ")}</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">Patient: {request.patientWallet}</p>
+              <p className="mt-1 text-xs text-muted-foreground">Selected approvers: {request.selectedApprovers.join(", ")}</p>
             </div>
             <Badge variant="secondary">{request.status}</Badge>
           </CardHeader>

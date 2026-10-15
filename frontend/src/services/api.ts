@@ -72,11 +72,41 @@ export const registerOnChain = async (role: "patient" | "doctor"): Promise<strin
   const expectedRole = role === "patient" ? 1 : 2;
   if (currentRole === expectedRole) return "";
   if (currentRole !== 0) throw new Error("This wallet is already registered with another blockchain role");
-  const transaction = await contract[role === "patient" ? "registerPatient" : "registerDoctor"](
-    await getAmoyGasOverrides(contract),
-  );
-  const receipt = await transaction.wait();
-  return receipt.transactionHash;
+  const method = role === "patient" ? "registerPatient" : "registerDoctor";
+  const gasOverrides = await getAmoyGasOverrides(contract);
+  const balance = await contract.provider.getBalance(address);
+  if (balance.isZero()) {
+    throw new Error("This wallet has no POL on Polygon Amoy to pay the registration gas fee. Fund it with Amoy test POL and try again.");
+  }
+
+  try {
+    const estimatedGas = await contract.estimateGas[method]({
+      ...gasOverrides,
+      from: address,
+    });
+    const gasLimit = estimatedGas.mul(120).div(100);
+    const maximumGasCost = gasLimit.mul(gasOverrides.maxFeePerGas);
+    if (balance.lt(maximumGasCost)) {
+      throw new Error(
+        `Insufficient POL on Polygon Amoy for this registration. The wallet has ${ethers.utils.formatEther(balance)} POL; add test POL and try again.`,
+      );
+    }
+
+    const transaction = await contract[method]({
+      ...gasOverrides,
+      gasLimit,
+    });
+    const receipt = await transaction.wait();
+    return receipt.transactionHash;
+  } catch (error: any) {
+    if (error?.code === "INSUFFICIENT_FUNDS" || /insufficient funds|funds for gas/i.test(error?.message || "")) {
+      throw new Error("Insufficient POL on Polygon Amoy to pay the registration gas fee. Add Amoy test POL to this wallet and try again.");
+    }
+    if (/internal json-rpc error/i.test(error?.message || "")) {
+      throw new Error("Polygon Amoy RPC rejected the registration transaction. Check that this wallet has POL for gas and is connected to Polygon Amoy, then retry.");
+    }
+    throw error;
+  }
 };
 
 const ensureOnChainRole = async (role: "patient" | "doctor") => {
@@ -158,6 +188,7 @@ export interface EmergencyAccessRequest {
   id: string;
   recordId: number;
   patientWallet: string;
+  selectedApprovers: string[];
   context: string;
   reason: string;
   requestedResources: string[];
@@ -166,6 +197,23 @@ export interface EmergencyAccessRequest {
   expiresAt?: string;
   hospitalId?: string;
   hospitalName?: string;
+}
+
+export interface EmergencyRecordGrant {
+  grant_token: string;
+  expires_at: string;
+}
+
+export interface EmergencyApproverCandidate {
+  wallet: string;
+  fullName: string;
+}
+
+export interface EmergencyApproverHospital {
+  id: string;
+  name: string;
+  wallet: string;
+  doctors: EmergencyApproverCandidate[];
 }
 
 export interface Hospital {
@@ -180,7 +228,7 @@ export interface Hospital {
 export interface HospitalMember {
   wallet: string;
   full_name: string;
-  role: "admin" | "doctor";
+  role: "admin" | "doctor" | "emergency_doctor" | "staff";
   active: boolean;
   emergency_access: boolean;
 }
@@ -258,7 +306,17 @@ async function request(path: string, init: RequestInit = {}, auth = true): Promi
   }
   const data = await parseJson(res);
   if (!res.ok) {
-    const message = data?.detail || "Request failed";
+    const validationMessages = Object.entries(data || {}).flatMap(([field, value]) => {
+      if (Array.isArray(value)) {
+        return value
+          .filter((message): message is string => typeof message === "string")
+          .map((message) => `${field}: ${message}`);
+      }
+      return typeof value === "string" ? [`${field}: ${value}`] : [];
+    });
+    const message = typeof data?.detail === "string"
+      ? data.detail
+      : validationMessages[0] || "Request failed";
     throw new Error(message);
   }
   return data;
@@ -468,6 +526,9 @@ export const getHospitalEmergencyAudit = async (hospitalId: string): Promise<Hos
 export const getHospitalPublicAudit = async (hospitalId: string) =>
   request(`/hospitals/${hospitalId}/public-audit`, {}, false);
 
+export const getHospitalMembers = async (hospitalId: string): Promise<HospitalMember[]> =>
+  request(`/hospitals/${hospitalId}/doctors`);
+
 export const createDoctorHospitalRequest = async (hospitalWallet: string, requestedRole: "doctor" | "emergency_doctor", reason: string) =>
   request("/hospitals/doctor-requests", { method: "POST", body: JSON.stringify({ hospital_wallet: hospitalWallet, requested_role: requestedRole, reason }) });
 
@@ -654,9 +715,24 @@ export const getPatientRecordTargets = async (patientAddress: string): Promise<P
   }));
 };
 
+export const getEligibleEmergencyApprovers = async (): Promise<EmergencyApproverHospital[]> => {
+  const rows = await request("/access/emergency/eligible-approvers");
+  return rows.map((row: any) => ({
+    id: row.id,
+    name: row.name,
+    wallet: row.wallet,
+    doctors: row.doctors.map((doctor: any) => ({
+      wallet: doctor.wallet,
+      fullName: doctor.full_name,
+    })),
+  }));
+};
+
 export const createEmergencyAccessRequest = async (
   patientAddress: string,
   recordId: number,
+  hospitalId: string,
+  approverWallets: string[],
   context: string,
   reason: string,
   requestedResources: string[],
@@ -667,6 +743,8 @@ export const createEmergencyAccessRequest = async (
     body: JSON.stringify({
       patient_wallet: patientAddress.toLowerCase(),
       record_id: recordId,
+      hospital_id: hospitalId,
+      approver_wallets: approverWallets.map((wallet) => wallet.toLowerCase()),
       context,
       reason,
       requested_resources: requestedResources,
@@ -677,6 +755,7 @@ export const createEmergencyAccessRequest = async (
     id: row.id,
     recordId: row.record_id,
     patientWallet: row.patient_wallet,
+    selectedApprovers: row.selected_approvers,
     context: row.context,
     reason: row.reason,
     requestedResources: row.requested_resources,
@@ -694,6 +773,7 @@ export const getPendingEmergencyRequests = async (): Promise<EmergencyAccessRequ
     id: row.id,
     recordId: row.record_id,
     patientWallet: row.patient_wallet,
+    selectedApprovers: row.selected_approvers,
     context: row.context,
     reason: row.reason,
     requestedResources: row.requested_resources,
@@ -705,6 +785,46 @@ export const getPendingEmergencyRequests = async (): Promise<EmergencyAccessRequ
 
 export const decideEmergencyRequest = async (id: string, decision: "approve" | "reject") => {
   return request(`/access/emergency/requests/${id}/${decision}`, { method: "POST", body: JSON.stringify({}) });
+};
+
+export const getDoctorEmergencyRequests = async (): Promise<EmergencyAccessRequest[]> => {
+  const rows = await request("/access/emergency/requests/outgoing");
+  return rows.map((row: any) => ({
+    id: row.id,
+    recordId: row.record_id,
+    patientWallet: row.patient_wallet,
+    selectedApprovers: row.selected_approvers,
+    context: row.context,
+    reason: row.reason,
+    requestedResources: row.requested_resources,
+    status: row.status,
+    requestedAt: row.requested_at,
+    expiresAt: row.expires_at,
+    hospitalId: row.hospital_id,
+    hospitalName: row.hospital_name,
+  }));
+};
+
+export const issueEmergencyGrant = async (requestId: string): Promise<EmergencyRecordGrant> =>
+  request(`/access/emergency/requests/${requestId}/grant`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+
+export const viewEmergencyRecordFile = async (grantToken: string): Promise<string> => {
+  const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const response = await fetch(`${API_BASE_URL}/access/emergency/grants/record`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ grant_token: grantToken }),
+  });
+  if (!response.ok) {
+    const data = await parseJson(response);
+    throw new Error(data?.detail || "Failed to view emergency medical record");
+  }
+  return URL.createObjectURL(await response.blob());
 };
 
 export const getDoctorAccessHistory = async (): Promise<ActivityItem[]> => {

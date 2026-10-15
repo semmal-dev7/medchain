@@ -38,6 +38,7 @@ class DecisionSerializer(serializers.Serializer):
 class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
     patient_wallet = serializers.CharField(source="patient.wallet", read_only=True)
     doctor_wallet = serializers.CharField(source="doctor.wallet", read_only=True)
+    selected_approvers = serializers.SlugRelatedField(many=True, read_only=True, slug_field="wallet")
     record_id = serializers.IntegerField(source="record.record_id", read_only=True)
     hospital_id = serializers.UUIDField(source="hospital.id", read_only=True, allow_null=True)
     hospital_name = serializers.CharField(source="hospital.name", read_only=True, allow_null=True)
@@ -49,6 +50,7 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
             "record_id",
             "patient_wallet",
             "doctor_wallet",
+            "selected_approvers",
             "hospital_id",
             "hospital_name",
             "context",
@@ -66,6 +68,12 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
 class CreateEmergencyAccessRequestSerializer(serializers.Serializer):
     record_id = serializers.IntegerField(min_value=0)
     patient_wallet = serializers.CharField(max_length=42)
+    hospital_id = serializers.UUIDField()
+    approver_wallets = serializers.ListField(
+        child=serializers.CharField(max_length=42),
+        min_length=3,
+        max_length=3,
+    )
     context = serializers.ChoiceField(choices=[choice[0] for choice in EmergencyAccessRequest.CONTEXT_CHOICES])
     reason = serializers.CharField(min_length=10)
     requested_resources = serializers.ListField(
@@ -74,6 +82,12 @@ class CreateEmergencyAccessRequestSerializer(serializers.Serializer):
     )
     request_tx_hash = serializers.CharField(required=False, allow_blank=True, max_length=66)
     predicate = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+    def validate_approver_wallets(self, value):
+        wallets = [wallet.lower() for wallet in value]
+        if len(set(wallets)) != len(wallets):
+            raise serializers.ValidationError("Select three different emergency doctors.")
+        return wallets
 
 
 class ClinicalResourcesSerializer(serializers.Serializer):

@@ -1,5 +1,7 @@
 from rest_framework import permissions
 
+from apps.hospitals.emergency_policy import emergency_committee
+
 from .models import UserProfile
 
 
@@ -41,8 +43,6 @@ class IsActiveAdmin(permissions.BasePermission):
 class IsActiveEmergencyApprover(permissions.BasePermission):
     def has_permission(self, request, view):
         profile = get_request_profile(request)
-        return bool(
-            profile
-            and profile.role == UserProfile.ROLE_EMERGENCY_APPROVER
-            and profile.status == UserProfile.STATUS_ACTIVE
-        )
+        if not profile or profile.status != UserProfile.STATUS_ACTIVE:
+            return False
+        return emergency_committee().filter(user=profile).exists()

@@ -4,7 +4,7 @@ from rest_framework.test import APIClient
 
 from apps.users.models import UserProfile
 
-from .models import Hospital, HospitalMembership
+from .models import Hospital, HospitalDoctorRequest, HospitalMembership
 
 
 class HospitalOnboardingTests(TestCase):
@@ -36,6 +36,58 @@ class HospitalOnboardingTests(TestCase):
         membership = HospitalMembership.objects.get(user_id=self.doctor_wallet)
         self.assertEqual(str(membership.hospital_id), hospital_id)
         self.assertEqual(membership.role, HospitalMembership.ROLE_DOCTOR)
+
+    def test_hospital_admin_can_list_and_enable_emergency_access_for_doctor(self):
+        hospital = Hospital.objects.create(
+            wallet="0x0000000000000000000000000000000000000110",
+            name="Emergency Access Hospital",
+            registered_by=self.admin,
+        )
+        HospitalMembership.objects.create(hospital=hospital, user=self.admin, role=HospitalMembership.ROLE_ADMIN)
+        membership = HospitalMembership.objects.create(
+            hospital=hospital,
+            user=self.doctor,
+            role=HospitalMembership.ROLE_DOCTOR,
+        )
+
+        listed = self.client.get(f"/api/v1/hospitals/{hospital.id}/doctors")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.data[0]["wallet"], self.doctor_wallet)
+        self.assertFalse(listed.data[0]["emergency_access"])
+
+        updated = self.client.patch(
+            f"/api/v1/hospitals/{hospital.id}/doctors/{self.doctor_wallet}",
+            {"emergency_access": True},
+            format="json",
+        )
+
+        self.assertEqual(updated.status_code, 200)
+        membership.refresh_from_db()
+        self.assertTrue(membership.emergency_access)
+
+    def test_hospital_admin_can_enable_doctor_as_emergency_approver(self):
+        hospital = Hospital.objects.create(
+            wallet="0x0000000000000000000000000000000000000111",
+            name="Emergency Approver Setup Hospital",
+            registered_by=self.admin,
+        )
+        HospitalMembership.objects.create(hospital=hospital, user=self.admin, role=HospitalMembership.ROLE_ADMIN)
+        membership = HospitalMembership.objects.create(
+            hospital=hospital,
+            user=self.doctor,
+            role=HospitalMembership.ROLE_DOCTOR,
+        )
+
+        response = self.client.patch(
+            f"/api/v1/hospitals/{hospital.id}/doctors/{self.doctor_wallet}",
+            {"role": HospitalMembership.ROLE_EMERGENCY_DOCTOR, "emergency_access": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, HospitalMembership.ROLE_EMERGENCY_DOCTOR)
+        self.assertTrue(membership.emergency_access)
 
     def test_doctor_cannot_register_hospital(self):
         self.client.force_authenticate(user=self.doctor_user)
@@ -116,3 +168,46 @@ class HospitalOnboardingTests(TestCase):
         response = self.client.get("/api/v1/hospitals/mine")
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["name"] for row in response.data], ["Managed Hospital"])
+
+    def test_hospital_can_approve_more_than_three_emergency_approvers(self):
+        hospital = Hospital.objects.create(
+            wallet="0x0000000000000000000000000000000000000109",
+            name="Emergency Committee Hospital",
+            registered_by=self.admin,
+        )
+        HospitalMembership.objects.create(hospital=hospital, user=self.admin, role=HospitalMembership.ROLE_ADMIN)
+        for index in range(3):
+            wallet = f"0x{index + 200:040x}"
+            profile = UserProfile.objects.create(wallet=wallet, role=UserProfile.ROLE_DOCTOR)
+            HospitalMembership.objects.create(
+                hospital=hospital,
+                user=profile,
+                role=HospitalMembership.ROLE_EMERGENCY_DOCTOR,
+                active=True,
+                emergency_access=True,
+            )
+        fourth_wallet = "0x0000000000000000000000000000000000000203"
+        fourth = UserProfile.objects.create(
+            wallet=fourth_wallet,
+            role=UserProfile.ROLE_DOCTOR,
+            status=UserProfile.STATUS_PENDING,
+        )
+        request_obj = HospitalDoctorRequest.objects.create(
+            hospital=hospital,
+            doctor=fourth,
+            requested_role=HospitalMembership.ROLE_EMERGENCY_DOCTOR,
+        )
+
+        response = self.client.post(
+            f"/api/v1/hospitals/{hospital.id}/doctor-requests/{request_obj.id}/approve"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        request_obj.refresh_from_db()
+        self.assertEqual(request_obj.status, HospitalDoctorRequest.STATUS_APPROVED)
+        self.assertTrue(HospitalMembership.objects.filter(
+            hospital=hospital,
+            user=fourth,
+            role=HospitalMembership.ROLE_EMERGENCY_DOCTOR,
+            emergency_access=True,
+        ).exists())

@@ -44,6 +44,8 @@ const doctorNav = [
   { title: "Appointments", url: "/doctor/appointments", icon: CalendarDays },
   { title: "Prescriptions", url: "/doctor/prescriptions", icon: Pill },
   { title: "Emergency Access", url: "/doctor/emergency", icon: Siren },
+  { title: "Emergency Records", url: "/doctor/emergency-records", icon: FileHeart },
+  { title: "Emergency Approvals", url: "/doctor/emergency-approvals", icon: ShieldCheck },
   { title: "Access History", url: "/doctor/history", icon: History },
 ];
 

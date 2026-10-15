@@ -1,3 +1,7 @@
+from datetime import timedelta
+
+from cryptography.fernet import InvalidToken
+from django.db import transaction
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -8,13 +12,19 @@ from apps.chain.services import ChainService
 from apps.records.models import Record
 from apps.records.serializers import RecordSerializer
 from apps.records.encryption import decrypt_file
-from apps.hospitals.models import HospitalEmergencyPolicy, HospitalMembership
+from apps.hospitals.models import Hospital, HospitalEmergencyPolicy, HospitalMembership
+from apps.hospitals.emergency_policy import (
+    EMERGENCY_APPROVAL_THRESHOLD,
+    EMERGENCY_REQUEST_APPROVER_COUNT,
+    EMERGENCY_APPROVAL_WINDOW_MINUTES,
+    emergency_committee,
+)
 from apps.records.clinical import build_fhir_bundle, create_clinical_commitment
 from apps.users.models import UserProfile
 from apps.users.permissions import IsActiveDoctor, IsActiveEmergencyApprover, IsActivePatient, get_request_profile
 
 from .emergency import issue_temporary_grant, validate_temporary_grant
-from .models import AccessRequest, Appointment, EmergencyAccessRequest, EmergencyApproval
+from .models import AccessRequest, Appointment, EmergencyAccessRequest, EmergencyApproval, EmergencyRequestApprover
 from .serializers import (
     AccessRequestSerializer,
     CreateAccessRequestSerializer,
@@ -227,6 +237,7 @@ class UpdateAuthorizedRecordFhirView(APIView):
 class CreateEmergencyAccessRequestView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
 
+    @transaction.atomic
     def post(self, request):
         serializer = CreateEmergencyAccessRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -244,15 +255,39 @@ class CreateEmergencyAccessRequestView(APIView):
         if not chain.assert_doctor_can_request(record.record_id, doctor.wallet):
             return Response({"detail": "Doctor cannot request this record"}, status=status.HTTP_403_FORBIDDEN)
 
-        membership = HospitalMembership.objects.select_related("hospital").filter(
+        hospital = Hospital.objects.select_for_update().filter(
+            id=data["hospital_id"],
+            status=Hospital.STATUS_ACTIVE,
+        ).first()
+        if not hospital:
+            return Response({"detail": "Selected hospital is not active."}, status=status.HTTP_403_FORBIDDEN)
+        membership = HospitalMembership.objects.filter(
             user=doctor,
             role__in=[HospitalMembership.ROLE_DOCTOR, HospitalMembership.ROLE_EMERGENCY_DOCTOR],
             active=True,
-            emergency_access=True,
-            hospital__status="active",
+            hospital=hospital,
         ).first()
         if not membership:
-            return Response({"detail": "Doctor must belong to an active hospital"}, status=status.HTTP_403_FORBIDDEN)
+            return Response(
+                {"detail": "Select a hospital where you have an active doctor membership."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if not membership.emergency_access:
+            return Response(
+                {"detail": "The hospital administrator must enable emergency access for this doctor."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        selected_wallets = data["approver_wallets"]
+        eligible_wallets = set(
+            emergency_committee(membership.hospital)
+            .exclude(user=doctor)
+            .values_list("user_id", flat=True)
+        )
+        if not set(selected_wallets).issubset(eligible_wallets):
+            return Response(
+                {"detail": "All selected approvers must be active emergency doctors from the selected hospital."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         policy = HospitalEmergencyPolicy.objects.filter(hospital=membership.hospital).first()
         if policy and data.get("predicate") and data["predicate"] not in policy.allowed_predicates:
             return Response({"detail": "Requested emergency resources are outside the hospital policy"}, status=status.HTTP_403_FORBIDDEN)
@@ -268,7 +303,51 @@ class CreateEmergencyAccessRequestView(APIView):
             request_tx_hash=data.get("request_tx_hash", ""),
             predicate=data.get("predicate", ""),
         )
+        EmergencyRequestApprover.objects.bulk_create([
+            EmergencyRequestApprover(request=request_obj, approver_id=wallet)
+            for wallet in selected_wallets
+        ])
         return Response(EmergencyAccessRequestSerializer(request_obj).data, status=status.HTTP_201_CREATED)
+
+
+class EmergencyEligibleApproversView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
+
+    def get(self, request):
+        doctor = get_request_profile(request)
+        authorized_hospital_ids = HospitalMembership.objects.filter(
+            user=doctor,
+            role__in=[HospitalMembership.ROLE_DOCTOR, HospitalMembership.ROLE_EMERGENCY_DOCTOR],
+            active=True,
+            emergency_access=True,
+            hospital__status="active",
+        ).values_list("hospital_id", flat=True)
+        memberships = emergency_committee().filter(
+            hospital_id__in=authorized_hospital_ids,
+        ).exclude(user=doctor).select_related("hospital", "user").order_by(
+            "hospital__name",
+            "user__full_name",
+            "user__wallet",
+        )
+        hospitals = {}
+        for membership in memberships:
+            hospital = hospitals.setdefault(
+                str(membership.hospital_id),
+                {
+                    "id": str(membership.hospital_id),
+                    "name": membership.hospital.name,
+                    "wallet": membership.hospital.wallet,
+                    "doctors": [],
+                },
+            )
+            hospital["doctors"].append({
+                "wallet": membership.user.wallet,
+                "full_name": membership.user.full_name,
+            })
+        return Response([
+            hospital for hospital in hospitals.values()
+            if len(hospital["doctors"]) >= EMERGENCY_REQUEST_APPROVER_COUNT
+        ])
 
 
 class OutgoingEmergencyRequestsView(APIView):
@@ -283,13 +362,44 @@ class OutgoingEmergencyRequestsView(APIView):
 class IssueEmergencyGrantView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
 
+    @transaction.atomic
     def post(self, request, request_id):
         doctor = get_request_profile(request)
-        emergency_request = EmergencyAccessRequest.objects.filter(id=request_id, doctor=doctor).first()
+        emergency_request = EmergencyAccessRequest.objects.select_for_update().filter(id=request_id, doctor=doctor).first()
         if not emergency_request:
             return Response({"detail": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
         if emergency_request.status != EmergencyAccessRequest.STATUS_APPROVED:
             return Response({"detail": "Emergency request is not approved"}, status=status.HTTP_409_CONFLICT)
+        hospital = Hospital.objects.select_for_update().filter(
+            id=emergency_request.hospital_id,
+            status=Hospital.STATUS_ACTIVE,
+        ).first()
+        if not hospital:
+            return Response({"detail": "The hospital is no longer active."}, status=status.HTTP_409_CONFLICT)
+        if not HospitalMembership.objects.filter(
+            hospital=hospital,
+            user=doctor,
+            active=True,
+            emergency_access=True,
+            hospital__status="active",
+        ).exists():
+            return Response({"detail": "Doctor's emergency hospital authorization is no longer active."}, status=status.HTTP_403_FORBIDDEN)
+        selected_wallets = list(emergency_request.selected_approvers.values_list("wallet", flat=True))
+        if len(selected_wallets) != EMERGENCY_REQUEST_APPROVER_COUNT:
+            return Response({"detail": "Emergency request does not have three assigned approvers."}, status=status.HTTP_409_CONFLICT)
+        eligible_selected_wallets = list(
+            emergency_committee(hospital)
+            .filter(user_id__in=selected_wallets)
+            .values_list("user_id", flat=True)
+        )
+        approved_count = EmergencyApproval.objects.filter(
+            request=emergency_request,
+            approver_id__in=eligible_selected_wallets,
+            approver__status=UserProfile.STATUS_ACTIVE,
+            decision=EmergencyApproval.DECISION_APPROVED,
+        ).count()
+        if approved_count < EMERGENCY_APPROVAL_THRESHOLD:
+            return Response({"detail": "Two current selected-approver approvals are required to issue access."}, status=status.HTTP_409_CONFLICT)
 
         grant, token = issue_temporary_grant(emergency_request)
         response = EmergencyAccessGrantSerializer(grant).data
@@ -345,55 +455,138 @@ class EmergencyDisclosureView(APIView):
         })
 
 
+class EmergencyRecordView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsActiveDoctor]
+
+    def post(self, request):
+        grant = validate_temporary_grant(request.data.get("grant_token", ""))
+        doctor = get_request_profile(request)
+        if not grant or grant.request.doctor_id != doctor.wallet:
+            return Response({"detail": "Temporary emergency access expired or invalid"}, status=status.HTTP_403_FORBIDDEN)
+
+        record = grant.request.record
+        if not record.active:
+            return Response({"detail": "The emergency medical record is no longer active"}, status=status.HTTP_404_NOT_FOUND)
+        if record.encrypted_file:
+            try:
+                with record.encrypted_file.open("rb") as encrypted_file:
+                    contents = decrypt_file(encrypted_file.read())
+            except (InvalidToken, OSError):
+                return Response({"detail": "Stored emergency medical file could not be decrypted"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            response = FileResponse(
+                iter([contents]),
+                content_type="application/pdf",
+                as_attachment=False,
+                filename=record.original_file_name or f"emergency-medical-record-{record.record_id}.pdf",
+            )
+        elif record.uploaded_file:
+            response = FileResponse(
+                record.uploaded_file.open("rb"),
+                content_type="application/pdf",
+                as_attachment=False,
+                filename=record.uploaded_file.name.rsplit("/", 1)[-1],
+            )
+        else:
+            return Response({"detail": "The emergency medical file is not available for viewing"}, status=status.HTTP_404_NOT_FOUND)
+
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+
 class PendingEmergencyRequestsView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsActiveEmergencyApprover]
 
     def get(self, request):
+        now = timezone.now()
+        EmergencyAccessRequest.objects.filter(
+            status__in=[
+                EmergencyAccessRequest.STATUS_REQUESTED,
+                EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED,
+            ],
+            requested_at__lte=now - timedelta(minutes=EMERGENCY_APPROVAL_WINDOW_MINUTES),
+        ).update(status=EmergencyAccessRequest.STATUS_EXPIRED)
+
+        approver = get_request_profile(request)
+        approver_hospitals = emergency_committee().filter(
+            user=approver,
+        ).values_list("hospital_id", flat=True)
         requests_qs = EmergencyAccessRequest.objects.filter(
+            hospital_id__in=approver_hospitals,
+            selected_approvers=approver,
             status__in=[EmergencyAccessRequest.STATUS_REQUESTED, EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED]
-        ).order_by("requested_at")
+        ).distinct().order_by("requested_at")
         return Response(EmergencyAccessRequestSerializer(requests_qs, many=True).data)
 
 
 class ApproveEmergencyRequestView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsActiveEmergencyApprover]
-    threshold = 2
 
     def post(self, request, request_id):
         approver = get_request_profile(request)
-        emergency_request = EmergencyAccessRequest.objects.filter(id=request_id).first()
-        if not emergency_request:
-            return Response({"detail": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
-        if emergency_request.status not in (
-            EmergencyAccessRequest.STATUS_REQUESTED,
-            EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED,
-        ):
-            return Response({"detail": "Emergency request is no longer awaiting approval"}, status=status.HTTP_409_CONFLICT)
+        with transaction.atomic():
+            emergency_request = EmergencyAccessRequest.objects.select_for_update().filter(id=request_id).first()
+            if not emergency_request:
+                return Response({"detail": "Emergency request not found"}, status=status.HTTP_404_NOT_FOUND)
+            if emergency_request.status not in (
+                EmergencyAccessRequest.STATUS_REQUESTED,
+                EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED,
+            ):
+                return Response({"detail": "Emergency request is no longer awaiting approval"}, status=status.HTTP_409_CONFLICT)
+            if timezone.now() >= emergency_request.requested_at + timedelta(minutes=EMERGENCY_APPROVAL_WINDOW_MINUTES):
+                emergency_request.status = EmergencyAccessRequest.STATUS_EXPIRED
+                emergency_request.save(update_fields=["status"])
+                return Response(
+                    {"detail": f"The {EMERGENCY_APPROVAL_WINDOW_MINUTES}-minute emergency approval window has expired."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            hospital = Hospital.objects.select_for_update().filter(
+                id=emergency_request.hospital_id,
+                status=Hospital.STATUS_ACTIVE,
+            ).first()
+            if not hospital:
+                return Response({"detail": "The request's hospital is no longer active."}, status=status.HTTP_409_CONFLICT)
+            if approver.wallet == emergency_request.doctor_id:
+                return Response({"detail": "The requesting doctor cannot approve their own emergency request."}, status=status.HTTP_403_FORBIDDEN)
+            if (
+                not emergency_request.selected_approvers.filter(pk=approver.pk).exists()
+                or not emergency_committee(hospital).filter(user=approver).exists()
+            ):
+                return Response({"detail": "Only a selected active emergency doctor from this hospital can approve."}, status=status.HTTP_403_FORBIDDEN)
+            selected_wallets = list(emergency_request.selected_approvers.values_list("wallet", flat=True))
+            eligible_selected_wallets = list(
+                emergency_committee(hospital)
+                .filter(user_id__in=selected_wallets)
+                .values_list("user_id", flat=True)
+            )
 
-        approval, created = EmergencyApproval.objects.get_or_create(
-            request=emergency_request,
-            approver=approver,
-            defaults={"decision": EmergencyApproval.DECISION_APPROVED},
-        )
-        if not created:
-            return Response({"detail": "Approver has already decided this request"}, status=status.HTTP_409_CONFLICT)
+            approval, created = EmergencyApproval.objects.get_or_create(
+                request=emergency_request,
+                approver=approver,
+                defaults={"decision": EmergencyApproval.DECISION_APPROVED},
+            )
+            if not created:
+                return Response({"detail": "Approver has already decided this request"}, status=status.HTTP_409_CONFLICT)
 
-        approved_count = EmergencyApproval.objects.filter(
-            request=emergency_request,
-            decision=EmergencyApproval.DECISION_APPROVED,
-        ).count()
-        if approved_count >= self.threshold:
-            emergency_request.status = EmergencyAccessRequest.STATUS_APPROVED
-            emergency_request.approved_at = timezone.now()
-            emergency_request.save(update_fields=["status", "approved_at"])
-        else:
-            emergency_request.status = EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED
-            emergency_request.save(update_fields=["status"])
+            approved_count = EmergencyApproval.objects.filter(
+                request=emergency_request,
+                approver_id__in=eligible_selected_wallets,
+                approver__status=UserProfile.STATUS_ACTIVE,
+                decision=EmergencyApproval.DECISION_APPROVED,
+            ).count()
+            if approved_count >= EMERGENCY_APPROVAL_THRESHOLD:
+                emergency_request.status = EmergencyAccessRequest.STATUS_APPROVED
+                emergency_request.approved_at = timezone.now()
+                emergency_request.save(update_fields=["status", "approved_at"])
+            else:
+                emergency_request.status = EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED
+                emergency_request.save(update_fields=["status"])
 
         return Response({
             "approval": EmergencyApprovalSerializer(approval).data,
             "approval_count": approved_count,
-            "threshold": self.threshold,
+            "threshold": EMERGENCY_APPROVAL_THRESHOLD,
+            "committee_size": EMERGENCY_REQUEST_APPROVER_COUNT,
             "status": emergency_request.status,
         })
 
@@ -403,21 +596,42 @@ class RejectEmergencyRequestView(APIView):
 
     def post(self, request, request_id):
         approver = get_request_profile(request)
-        emergency_request = EmergencyAccessRequest.objects.filter(
-            id=request_id,
-            status__in=[EmergencyAccessRequest.STATUS_REQUESTED, EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED],
-        ).first()
-        if not emergency_request:
-            return Response({"detail": "Emergency request not found or already decided"}, status=status.HTTP_409_CONFLICT)
-        approval, created = EmergencyApproval.objects.get_or_create(
-            request=emergency_request,
-            approver=approver,
-            defaults={"decision": EmergencyApproval.DECISION_REJECTED},
-        )
-        if not created:
-            return Response({"detail": "Approver has already decided this request"}, status=status.HTTP_409_CONFLICT)
-        emergency_request.status = EmergencyAccessRequest.STATUS_REJECTED
-        emergency_request.save(update_fields=["status"])
+        with transaction.atomic():
+            emergency_request = EmergencyAccessRequest.objects.select_for_update().filter(
+                id=request_id,
+                status__in=[EmergencyAccessRequest.STATUS_REQUESTED, EmergencyAccessRequest.STATUS_CONTEXT_VERIFIED],
+            ).first()
+            if not emergency_request:
+                return Response({"detail": "Emergency request not found or already decided"}, status=status.HTTP_409_CONFLICT)
+            if timezone.now() >= emergency_request.requested_at + timedelta(minutes=EMERGENCY_APPROVAL_WINDOW_MINUTES):
+                emergency_request.status = EmergencyAccessRequest.STATUS_EXPIRED
+                emergency_request.save(update_fields=["status"])
+                return Response(
+                    {"detail": f"The {EMERGENCY_APPROVAL_WINDOW_MINUTES}-minute emergency approval window has expired."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            hospital = Hospital.objects.select_for_update().filter(
+                id=emergency_request.hospital_id,
+                status=Hospital.STATUS_ACTIVE,
+            ).first()
+            if not hospital:
+                return Response({"detail": "The request's hospital is no longer active."}, status=status.HTTP_409_CONFLICT)
+            if approver.wallet == emergency_request.doctor_id:
+                return Response({"detail": "The requesting doctor cannot reject their own emergency request."}, status=status.HTTP_403_FORBIDDEN)
+            if (
+                not emergency_request.selected_approvers.filter(pk=approver.pk).exists()
+                or not emergency_committee(hospital).filter(user=approver).exists()
+            ):
+                return Response({"detail": "Only a selected active emergency doctor from this hospital can decide this request."}, status=status.HTTP_403_FORBIDDEN)
+            approval, created = EmergencyApproval.objects.get_or_create(
+                request=emergency_request,
+                approver=approver,
+                defaults={"decision": EmergencyApproval.DECISION_REJECTED},
+            )
+            if not created:
+                return Response({"detail": "Approver has already decided this request"}, status=status.HTTP_409_CONFLICT)
+            emergency_request.status = EmergencyAccessRequest.STATUS_REJECTED
+            emergency_request.save(update_fields=["status"])
         return Response(EmergencyApprovalSerializer(approval).data)
 
 
