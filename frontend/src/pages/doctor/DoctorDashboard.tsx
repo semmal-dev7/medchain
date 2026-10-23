@@ -52,7 +52,9 @@ export default function DoctorDashboard() {
       toast.success("Access request sent");
       setRequestAddress("");
       setDialogOpen(false);
-    } catch { toast.error("Request failed"); }
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Could not submit the access request");
+    }
     finally { setRequesting(false); }
   };
 

@@ -1,5 +1,5 @@
-import React, { createContext, useCallback, useContext, useState } from "react";
-import { authenticateWallet, clearAuthTokens, fetchMe } from "@/services/api";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { AUTH_EXPIRED_EVENT, authenticateWallet, clearAuthTokens, fetchMe, getAccessToken, getRefreshToken } from "@/services/api";
 import { registerOnChain } from "@/services/api";
 
 export type UserRole = "patient" | "doctor" | "admin" | "emergency_approver";
@@ -36,9 +36,25 @@ const toUser = (profile: any): User => ({
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(() => {
+    if (!getAccessToken() && !getRefreshToken()) return null;
     const stored = localStorage.getItem(SESSION_KEY);
-    return stored ? (JSON.parse(stored) as User) : null;
+    if (!stored) return null;
+    try {
+      return JSON.parse(stored) as User;
+    } catch {
+      localStorage.removeItem(SESSION_KEY);
+      return null;
+    }
   });
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      setUser(null);
+      localStorage.removeItem(SESSION_KEY);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleExpiredSession);
+  }, []);
 
   const login = useCallback(async (wallet: string, signMessage: (message: string) => Promise<string>) => {
     await authenticateWallet(wallet, signMessage);

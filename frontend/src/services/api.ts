@@ -6,6 +6,7 @@ const API_BASE_URL =
 
 const ACCESS_TOKEN_KEY = "healthchain_access_token";
 const REFRESH_TOKEN_KEY = "healthchain_refresh_token";
+export const AUTH_EXPIRED_EVENT = "healthchain:auth-expired";
 const PATIENT_PRIVACY_ADDRESS =
   (import.meta.env.VITE_PATIENT_PRIVACY_CONTRACT as string | undefined) ||
   "0xA67be390586868bCb295681C3A2D1a7e38601658";
@@ -284,8 +285,105 @@ const parseJson = async (res: Response) => {
   try {
     return JSON.parse(text);
   } catch {
-    return {};
+    return { detail: text.trim() };
   }
+};
+
+const getResponseError = (data: any, statusCode: number): string => {
+  if (typeof data?.detail === "string") return data.detail;
+  if (typeof data?.error === "string") return data.error;
+
+  const messages = Object.entries(data || {}).flatMap(([field, value]) => {
+    const values = Array.isArray(value) ? value : [value];
+    return values
+      .filter((message): message is string => typeof message === "string")
+      .map((message) => field === "non_field_errors" ? message : `${field}: ${message}`);
+  });
+  return messages[0] || `Request failed (HTTP ${statusCode})`;
+};
+
+let refreshRequest: Promise<string> | null = null;
+
+const expireSession = () => {
+  clearAuthTokens();
+  localStorage.removeItem("healthchain_user");
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+};
+
+const refreshAccessToken = async (): Promise<string> => {
+  if (refreshRequest) return refreshRequest;
+
+  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken) {
+    expireSession();
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+
+  refreshRequest = (async () => {
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/auth/token/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh: refreshToken }),
+      });
+    } catch {
+      throw new Error(`Cannot reach the API at ${API_BASE_URL}. Start the backend server and try again.`);
+    }
+
+    const data = await parseJson(response);
+    if (!response.ok || typeof data?.access !== "string") {
+      expireSession();
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    localStorage.setItem(ACCESS_TOKEN_KEY, data.access);
+    if (typeof data.refresh === "string") {
+      localStorage.setItem(REFRESH_TOKEN_KEY, data.refresh);
+    }
+    return data.access as string;
+  })();
+
+  try {
+    return await refreshRequest;
+  } finally {
+    refreshRequest = null;
+  }
+};
+
+const authenticatedFetch = async (path: string, init: RequestInit = {}, auth = true): Promise<Response> => {
+  const headers = new Headers(init.headers);
+  let token = auth ? localStorage.getItem(ACCESS_TOKEN_KEY) : null;
+  if (auth && !token && localStorage.getItem(REFRESH_TOKEN_KEY)) {
+    token = await refreshAccessToken();
+  }
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+  } catch {
+    throw new Error(`Cannot reach the API at ${API_BASE_URL}. Start the backend server and try again.`);
+  }
+
+  if (auth && response.status === 401) {
+    if (!token && !localStorage.getItem(REFRESH_TOKEN_KEY)) {
+      expireSession();
+      throw new Error("Your session could not be validated. Please sign in again.");
+    }
+    token = await refreshAccessToken();
+    headers.set("Authorization", `Bearer ${token}`);
+    try {
+      response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
+    } catch {
+      throw new Error(`Cannot reach the API at ${API_BASE_URL}. Start the backend server and try again.`);
+    }
+    if (response.status === 401) {
+      expireSession();
+      throw new Error("Your session could not be validated. Please sign in again.");
+    }
+  }
+  return response;
 };
 
 async function request(path: string, init: RequestInit = {}, auth = true): Promise<any> {
@@ -298,26 +396,10 @@ async function request(path: string, init: RequestInit = {}, auth = true): Promi
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  let res: Response;
-  try {
-    res = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
-  } catch {
-    throw new Error(`Cannot reach the API at ${API_BASE_URL}. Start the backend server and try again.`);
-  }
+  const res = await authenticatedFetch(path, { ...init, headers }, auth);
   const data = await parseJson(res);
   if (!res.ok) {
-    const validationMessages = Object.entries(data || {}).flatMap(([field, value]) => {
-      if (Array.isArray(value)) {
-        return value
-          .filter((message): message is string => typeof message === "string")
-          .map((message) => `${field}: ${message}`);
-      }
-      return typeof value === "string" ? [`${field}: ${value}`] : [];
-    });
-    const message = typeof data?.detail === "string"
-      ? data.detail
-      : validationMessages[0] || "Request failed";
-    throw new Error(message);
+    throw new Error(getResponseError(data, res.status));
   }
   return data;
 }
@@ -342,6 +424,7 @@ export const clearAuthTokens = () => {
 };
 
 export const getAccessToken = () => localStorage.getItem(ACCESS_TOKEN_KEY);
+export const getRefreshToken = () => localStorage.getItem(REFRESH_TOKEN_KEY);
 
 export const authenticateWallet = async (
   wallet: string,
@@ -547,7 +630,7 @@ export const updateHospitalDispute = async (hospitalId: string, disputeId: numbe
 
 export const downloadRecord = async (recordId: number, fileName: string): Promise<void> => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  const response = await fetch(`${API_BASE_URL}/records/${recordId}/download`, {
+  const response = await authenticatedFetch(`/records/${recordId}/download`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) {
@@ -655,7 +738,7 @@ export const updateAppointmentStatus = async (id: string, status: "confirmed" | 
 
 export const downloadAuthorizedRecord = async (recordId: number, fileName: string): Promise<void> => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  const response = await fetch(`${API_BASE_URL}/access/records/${recordId}/download`, {
+  const response = await authenticatedFetch(`/access/records/${recordId}/download`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!response.ok) {
@@ -673,7 +756,7 @@ export const downloadAuthorizedRecord = async (recordId: number, fileName: strin
 
 export const viewAuthorizedRecord = async (recordId: number): Promise<string> => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
-  const response = await fetch(`${API_BASE_URL}/access/records/${recordId}/view`, {
+  const response = await authenticatedFetch(`/access/records/${recordId}/view`, {
     headers: token ? { Authorization: "Bearer " + token } : {},
   });
   if (!response.ok) {
@@ -692,17 +775,44 @@ export const requestPatientAccess = async (patientAddress: string): Promise<void
   }
 
   const target = targets[0];
+  const existingRequests = await request("/access/requests/outgoing");
+  const existingRequest = (existingRequests || []).find(
+    (item: any) =>
+      String(item.patient_wallet || "").toLowerCase() === wallet &&
+      Number(item.record_id) === Number(target.record_id),
+  );
+  if (existingRequest?.status === "pending") {
+    throw new Error("An access request for this record is already pending.");
+  }
+  if (existingRequest?.status === "approved") {
+    throw new Error("You already have access to this patient's record.");
+  }
+
   const contract = await getPatientPrivacyContract();
-  const transaction = await contract.requestAccess(target.record_id, await getAmoyGasOverrides(contract));
-  await transaction.wait();
-  await request("/access/requests", {
-    method: "POST",
-    body: JSON.stringify({
-      patient_wallet: wallet,
-      record_id: target.record_id,
-      request_tx_hash: transaction.hash,
-    }),
-  });
+  let transaction: ethers.ContractTransaction;
+  try {
+    transaction = await contract.requestAccess(target.record_id, await getAmoyGasOverrides(contract));
+    await transaction.wait();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not submit the access request to Polygon Amoy: ${message}`);
+  }
+
+  try {
+    await request("/access/requests", {
+      method: "POST",
+      body: JSON.stringify({
+        patient_wallet: wallet,
+        record_id: target.record_id,
+        request_tx_hash: transaction.hash,
+      }),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `The blockchain request was confirmed (${transaction.hash}), but the backend could not save it: ${message}. Contact support before retrying.`,
+    );
+  }
 };
 
 export const getPatientRecordTargets = async (patientAddress: string): Promise<PatientRecordTarget[]> => {
@@ -815,7 +925,7 @@ export const viewEmergencyRecordFile = async (grantToken: string): Promise<strin
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${API_BASE_URL}/access/emergency/grants/record`, {
+  const response = await authenticatedFetch("/access/emergency/grants/record", {
     method: "POST",
     headers,
     body: JSON.stringify({ grant_token: grantToken }),

@@ -1,13 +1,35 @@
+from django.contrib.auth.models import User
 from django.test import TestCase
 from eth_account import Account
 from eth_account.messages import encode_defunct
 from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.users.models import UserProfile
 from .services import extract_siwe_nonce, verify_siwe_signature
 
 
 class AuthnServiceTests(TestCase):
+    def test_refresh_endpoint_returns_a_new_access_token(self):
+        account = Account.create()
+        profile = UserProfile.objects.create(
+            wallet=account.address.lower(),
+            role=UserProfile.ROLE_PATIENT,
+            full_name="Test Patient",
+            status=UserProfile.STATUS_ACTIVE,
+        )
+        user = User.objects.create_user(username=profile.wallet)
+        refresh = RefreshToken.for_user(user)
+
+        response = APIClient().post(
+            "/api/v1/auth/token/refresh",
+            {"refresh": str(refresh)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("access", response.data)
+
     def test_registration_role_is_preserved_on_login(self):
         account = Account.create()
         client = APIClient()
