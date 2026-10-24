@@ -125,19 +125,19 @@ sequenceDiagram
     actor Approvers as 3 Selected ER Doctors
     participant Backend as Django REST Backend
     participant ZKP as Circom Groth16 Prover
-    participant Amoy as Polygon Amoy (EmergencyZKPortal)
+    participant Amoy as Polygon Amoy
     
     ERDoc->>Backend: Create Emergency Request (Patient, Reason, 3 Selected Approvers)
     Backend-->>Approvers: Notify 3 Selected Hospital Doctors
     Note over Approvers: 30-Minute Break-Glass Window Begins
     Approvers->>Backend: Doctor 1 Approves (Vote 1/2)
-    Approvers->>Backend: Doctor 2 Approves (Vote 2/2 - Threshold Met!)
-    Backend->>ZKP: Generate Zero-Knowledge Predicate Proof (Poseidon Hash)
-    ZKP->>Amoy: Verify Groth16 Proof on EmergencyZKPortal.sol
+    Approvers->>Backend: Doctor 2 Approves (Vote 2/2 - Threshold Met)
+    Backend->>ZKP: Generate Zero-Knowledge Predicate Proof
+    ZKP->>Amoy: Verify Groth16 Proof on EmergencyZKPortal
     Amoy-->>Backend: Proof Verified on-chain
-    Backend-->>ERDoc: Issue 30-Minute Temporary Access Grant
+    Backend-->>ERDoc: Issue 30-Minute Temporary Grant Token
     Note over ERDoc: Doctor Views Patient Records with Live 30-Min Countdown
-    ERDoc->>Backend: Access expires or is revoked; immutable audit logged
+    Note over ERDoc,Backend: Access expires after 30 mins and immutable audit is logged
 ```
 
 - **Consolidated Request:** A single emergency request covers all records of the emergency patient.
