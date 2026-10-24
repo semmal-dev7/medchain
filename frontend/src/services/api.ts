@@ -188,6 +188,8 @@ export interface PatientRecord {
 export interface EmergencyAccessRequest {
   id: string;
   recordId: number;
+  recordName?: string;
+  isAllRecords?: boolean;
   patientWallet: string;
   selectedApprovers: string[];
   context: string;
@@ -864,6 +866,8 @@ export const createEmergencyAccessRequest = async (
   return {
     id: row.id,
     recordId: row.record_id,
+    recordName: row.record_name,
+    isAllRecords: row.is_all_records,
     patientWallet: row.patient_wallet,
     selectedApprovers: row.selected_approvers,
     context: row.context,
@@ -882,6 +886,8 @@ export const getPendingEmergencyRequests = async (): Promise<EmergencyAccessRequ
   return rows.map((row: any) => ({
     id: row.id,
     recordId: row.record_id,
+    recordName: row.record_name,
+    isAllRecords: row.is_all_records,
     patientWallet: row.patient_wallet,
     selectedApprovers: row.selected_approvers,
     context: row.context,
@@ -902,6 +908,8 @@ export const getDoctorEmergencyRequests = async (): Promise<EmergencyAccessReque
   return rows.map((row: any) => ({
     id: row.id,
     recordId: row.record_id,
+    recordName: row.record_name,
+    isAllRecords: row.is_all_records,
     patientWallet: row.patient_wallet,
     selectedApprovers: row.selected_approvers,
     context: row.context,
@@ -921,14 +929,14 @@ export const issueEmergencyGrant = async (requestId: string): Promise<EmergencyR
     body: JSON.stringify({}),
   });
 
-export const viewEmergencyRecordFile = async (grantToken: string): Promise<string> => {
+export const viewEmergencyRecordFile = async (grantToken: string, recordId?: number): Promise<string> => {
   const token = localStorage.getItem(ACCESS_TOKEN_KEY);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) headers.Authorization = `Bearer ${token}`;
   const response = await authenticatedFetch("/access/emergency/grants/record", {
     method: "POST",
     headers,
-    body: JSON.stringify({ grant_token: grantToken }),
+    body: JSON.stringify({ grant_token: grantToken, record_id: recordId }),
   });
   if (!response.ok) {
     const data = await parseJson(response);

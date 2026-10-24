@@ -40,14 +40,26 @@ class EmergencyAccessRequestSerializer(serializers.ModelSerializer):
     doctor_wallet = serializers.CharField(source="doctor.wallet", read_only=True)
     selected_approvers = serializers.SlugRelatedField(many=True, read_only=True, slug_field="wallet")
     record_id = serializers.IntegerField(source="record.record_id", read_only=True)
+    record_name = serializers.SerializerMethodField()
     hospital_id = serializers.UUIDField(source="hospital.id", read_only=True, allow_null=True)
     hospital_name = serializers.CharField(source="hospital.name", read_only=True, allow_null=True)
+    is_all_records = serializers.SerializerMethodField()
+
+    def get_is_all_records(self, obj):
+        return "AllRecords" in (obj.requested_resources or []) or "[Entire Medical Record]" in (obj.reason or "")
+
+    def get_record_name(self, obj):
+        if self.get_is_all_records(obj):
+            return "Entire Medical Record"
+        return obj.record.name if obj.record else ""
 
     class Meta:
         model = EmergencyAccessRequest
         fields = (
             "id",
             "record_id",
+            "record_name",
+            "is_all_records",
             "patient_wallet",
             "doctor_wallet",
             "selected_approvers",

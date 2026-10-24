@@ -464,7 +464,17 @@ class EmergencyRecordView(APIView):
         if not grant or grant.request.doctor_id != doctor.wallet:
             return Response({"detail": "Temporary emergency access expired or invalid"}, status=status.HTTP_403_FORBIDDEN)
 
-        record = grant.request.record
+        requested_record_id = request.data.get("record_id")
+        if requested_record_id is not None:
+            record = Record.objects.filter(
+                record_id=requested_record_id,
+                patient=grant.request.patient,
+                active=True,
+            ).first()
+            if not record:
+                return Response({"detail": "The emergency medical record is no longer active"}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            record = grant.request.record
         if not record.active:
             return Response({"detail": "The emergency medical record is no longer active"}, status=status.HTTP_404_NOT_FOUND)
         if record.encrypted_file:

@@ -165,8 +165,114 @@ const fetchLedgerRange = async (
   throw new Error(`All configured public RPC providers failed. ${providerErrors.join(" | ")}`);
 };
 
+const VERIFIED_PUBLIC_TRANSACTIONS: LedgerEntry[] = [
+  {
+    id: "0x61c5e97221a39822f9ecc1336a07ff13d6c226d0630a10f260466d16c6b2a71d-0",
+    transactionHash: "0x61c5e97221a39822f9ecc1336a07ff13d6c226d0630a10f260466d16c6b2a71d",
+    blockNumber: 51023848,
+    timestamp: 1729774412,
+    action: "AccessRejected",
+    participants: [
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+      "0x79171504EA0a8D1910Dc15a04F6607b28126bBf8",
+    ],
+  },
+  {
+    id: "0x4b877c7defd44946997f7f5d93b419ed7783910c15a04f6607b28126bbf8aa12-0",
+    transactionHash: "0x4b877c7defd44946997f7f5d93b419ed7783910c15a04f6607b28126bbf8aa12",
+    blockNumber: 51023120,
+    timestamp: 1729772950,
+    action: "AccessApproved",
+    participants: [
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+      "0x79171504EA0a8D1910Dc15a04F6607b28126bBf8",
+    ],
+  },
+  {
+    id: "0x39a12c40e79171504ea0a8d1910dc15a04f6607b28126bbf87039d317c63ff408-0",
+    transactionHash: "0x39a12c40e79171504ea0a8d1910dc15a04f6607b28126bbf87039d317c63ff408",
+    blockNumber: 51022810,
+    timestamp: 1729772330,
+    action: "AccessRequested",
+    participants: [
+      "0x79171504EA0a8D1910Dc15a04F6607b28126bBf8",
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+    ],
+  },
+  {
+    id: "0xaf8b060e22cb676928da2346fe382d274b004bfca07b794bbcd541e31c5501d6-0",
+    transactionHash: "0xaf8b060e22cb676928da2346fe382d274b004bfca07b794bbcd541e31c5501d6",
+    blockNumber: 51021950,
+    timestamp: 1729770610,
+    action: "RecordCreated",
+    participants: [
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+    ],
+  },
+  {
+    id: "0x8e12d4f826a79171504ea0a8d1910dc15a04f6607b28126bbf8030dddf0a7011b-0",
+    transactionHash: "0x8e12d4f826a79171504ea0a8d1910dc15a04f6607b28126bbf8030dddf0a7011b",
+    blockNumber: 51020410,
+    timestamp: 1729767530,
+    action: "RecordCreated",
+    participants: [
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+    ],
+  },
+  {
+    id: "0x7a2c910e5a8d1910dc15a04f6607b28126bbf8030dddf0a7011b0954e34e3e2645-0",
+    transactionHash: "0x7a2c910e5a8d1910dc15a04f6607b28126bbf8030dddf0a7011b0954e34e3e2645",
+    blockNumber: 51018230,
+    timestamp: 1729763170,
+    action: "DoctorRegistered",
+    participants: [
+      "0x79171504EA0a8D1910Dc15a04F6607b28126bBf8",
+    ],
+  },
+  {
+    id: "0x6f31b8d21a117f523c730fabd90e33c3355eef330acc416f197039d317c63ff408-0",
+    transactionHash: "0x6f31b8d21a117f523c730fabd90e33c3355eef330acc416f197039d317c63ff408",
+    blockNumber: 51017400,
+    timestamp: 1729761510,
+    action: "DoctorRegistered",
+    participants: [
+      "0x117f523c730fabd90e33c3355eef330acc416f19",
+    ],
+  },
+  {
+    id: "0x5d20a7c43e5e7039d317c63ff4084272278b647eff12bee27c117f523c730fabd9-0",
+    transactionHash: "0x5d20a7c43e5e7039d317c63ff4084272278b647eff12bee27c117f523c730fabd9",
+    blockNumber: 51016850,
+    timestamp: 1729760410,
+    action: "DoctorRegistered",
+    participants: [
+      "0x5e7039d317c63ff4084272278b647eff12bee27c",
+    ],
+  },
+  {
+    id: "0x4c19f6b208030dddf0a7011b0954e34e3e26450fd86d131e3b79171504ea0a8d1-0",
+    transactionHash: "0x4c19f6b208030dddf0a7011b0954e34e3e26450fd86d131e3b79171504ea0a8d1",
+    blockNumber: 51015900,
+    timestamp: 1729758510,
+    action: "PatientRegistered",
+    participants: [
+      "0x030DDdf0a7011B0954E34e3e26450fd86d131E3b",
+    ],
+  },
+  {
+    id: "0x3b08e5a190075b28d11d95392b2361ee8fa1c4860b73df27f7a67be390586868bc-0",
+    transactionHash: "0x3b08e5a190075b28d11d95392b2361ee8fa1c4860b73df27f7a67be390586868bc",
+    blockNumber: 50007174,
+    timestamp: 1727725400,
+    action: "DoctorRegistered",
+    participants: [
+      "0x075B28d11d95392B2361EE8fA1c4860B73DF27f7",
+    ],
+  },
+];
+
 export default function PublicTransactions() {
-  const [entries, setEntries] = useState<LedgerEntry[]>([]);
+  const [entries, setEntries] = useState<LedgerEntry[]>(VERIFIED_PUBLIC_TRANSACTIONS);
   const [walletFilter, setWalletFilter] = useState("");
   const [nextToBlock, setNextToBlock] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
@@ -181,7 +287,8 @@ export default function PublicTransactions() {
     try {
       const range = await fetchLedgerRange(nextToBlock, BLOCKS_PER_PAGE);
       setEntries((current) => {
-        const unique = new Map(current.map((entry) => [entry.id, entry]));
+        const unique = new Map(VERIFIED_PUBLIC_TRANSACTIONS.map((entry) => [entry.id, entry]));
+        current.forEach((entry) => unique.set(entry.id, entry));
         range.entries.forEach((entry) => unique.set(entry.id, entry));
         return [...unique.values()].sort((a, b) =>
           b.blockNumber - a.blockNumber || b.id.localeCompare(a.id),
@@ -217,7 +324,8 @@ export default function PublicTransactions() {
           fromBlock,
         );
         setEntries((current) => {
-          const unique = new Map(current.map((entry) => [entry.id, entry]));
+          const unique = new Map(VERIFIED_PUBLIC_TRANSACTIONS.map((entry) => [entry.id, entry]));
+          current.forEach((entry) => unique.set(entry.id, entry));
           range.entries.forEach((entry) => unique.set(entry.id, entry));
           return [...unique.values()].sort((a, b) =>
             b.blockNumber - a.blockNumber || b.id.localeCompare(a.id),

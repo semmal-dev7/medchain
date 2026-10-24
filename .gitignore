@@ -1,7 +1,28 @@
+# Dependencies
 node_modules/
+zk/node_modules/
+
+# Environment files
 .env
 .env.local
+.env.*.local
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.bak
+*.sqlite3-journal
+
+# Build outputs
 dist/
 build/
 .vite/
 coverage/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Large binaries
+zk/circom.exe

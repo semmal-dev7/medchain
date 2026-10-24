@@ -95,9 +95,12 @@ export default function HospitalDashboard() {
     }
   };
 
+  const currentHospital = hospitals.find((h) => h.id === selectedHospital) || audit?.hospital;
+  const hospitalDisplayName = currentHospital?.name || "Hospital Dashboard";
+
   return (
     <div className="space-y-6">
-      <div><h1 className="text-2xl font-bold">Hospital Dashboard</h1><p className="text-sm text-muted-foreground">Handle doctor verification requests and publish a transparent hospital affiliation audit.</p></div>
+      <div><h1 className="text-2xl font-bold">{hospitalDisplayName}</h1><p className="text-sm text-muted-foreground">Handle doctor verification requests and publish a transparent hospital affiliation audit.</p></div>
       {hospitals.length > 1 && <select className="flex h-10 w-full max-w-md rounded-md border border-input bg-background px-3 py-2 text-sm" value={selectedHospital} onChange={(event) => setSelectedHospital(event.target.value)}>{hospitals.map((hospital) => <option key={hospital.id} value={hospital.id}>{hospital.name} · {hospital.wallet}</option>)}</select>}
       {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : !selectedHospital ? <Card><CardContent className="p-6 text-sm text-muted-foreground">No registered hospitals are available.</CardContent></Card> : <div className="grid gap-6 xl:grid-cols-2">
         <Card><CardHeader><CardTitle className="flex items-center gap-2"><Clock3 className="h-5 w-5 text-warning" />Doctor Requests</CardTitle></CardHeader><CardContent>{requests.filter((item) => item.status === "pending").length ? <div className="space-y-3">{requests.filter((item) => item.status === "pending").map((item) => <div key={item.id} className="rounded-md border p-4"><p className="font-semibold">{item.doctor_name || item.doctor_wallet}</p><p className="font-mono text-xs text-muted-foreground">{item.doctor_wallet}</p><p className="mt-2 text-sm text-muted-foreground">Requested role: {item.requested_role}</p><p className="mt-1 text-sm text-muted-foreground">{item.reason || "No reason provided"}</p><div className="mt-3 flex gap-2"><Button size="sm" onClick={() => review(item.id, "approve")} disabled={actionId === item.id}><CheckCircle2 className="mr-1 h-4 w-4" />Approve</Button><Button size="sm" variant="destructive" onClick={() => review(item.id, "reject")} disabled={actionId === item.id}><XCircle className="mr-1 h-4 w-4" />Reject</Button></div></div>)}</div> : <p className="text-sm text-muted-foreground">No pending doctor requests.</p>}</CardContent></Card>

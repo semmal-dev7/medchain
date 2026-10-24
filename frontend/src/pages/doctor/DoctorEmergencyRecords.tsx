@@ -9,7 +9,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import {
   EmergencyAccessRequest,
   getDoctorEmergencyRequests,
+  getPatientRecordTargets,
   issueEmergencyGrant,
+  PatientRecordTarget,
   viewEmergencyRecordFile,
 } from "@/services/api";
 
@@ -19,8 +21,44 @@ interface EmergencyRecordViewer {
   title: string;
 }
 
+function ViewerCountdown({ expiresAt }: { expiresAt: string }) {
+  const [timeLeft, setTimeLeft] = useState<string>("");
+  const [isExpired, setIsExpired] = useState<boolean>(false);
+
+  useEffect(() => {
+    const target = Date.parse(expiresAt);
+    const update = () => {
+      const diff = target - Date.now();
+      if (diff <= 0) {
+        setTimeLeft("0m 00s");
+        setIsExpired(true);
+        return;
+      }
+      const mins = Math.floor(diff / 60000);
+      const secs = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${mins}m ${secs < 10 ? "0" : ""}${secs}s`);
+      setIsExpired(false);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [expiresAt]);
+
+  return (
+    <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold font-mono ${
+      isExpired
+        ? "bg-destructive/10 text-destructive border border-destructive/30"
+        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 animate-pulse"
+    }`}>
+      <Clock3 className="h-3.5 w-3.5" />
+      {isExpired ? "Access Expired" : `30-Min Break-Glass: ${timeLeft} remaining`}
+    </div>
+  );
+}
+
 export default function DoctorEmergencyRecords() {
   const [requests, setRequests] = useState<EmergencyAccessRequest[]>([]);
+  const [patientRecords, setPatientRecords] = useState<Record<string, PatientRecordTarget[]>>({});
   const [loading, setLoading] = useState(true);
   const [openingRequest, setOpeningRequest] = useState<string | null>(null);
   const [viewer, setViewer] = useState<EmergencyRecordViewer | null>(null);
@@ -28,7 +66,21 @@ export default function DoctorEmergencyRecords() {
 
   useEffect(() => {
     getDoctorEmergencyRequests()
-      .then(setRequests)
+      .then(async (data) => {
+        setRequests(data);
+        const allRecRequests = data.filter((r) => r.status === "approved" && r.isAllRecords);
+        const map: Record<string, PatientRecordTarget[]> = {};
+        for (const req of allRecRequests) {
+          if (!map[req.patientWallet]) {
+            try {
+              map[req.patientWallet] = await getPatientRecordTargets(req.patientWallet);
+            } catch {
+              // ignore
+            }
+          }
+        }
+        setPatientRecords(map);
+      })
       .catch((error: any) => toast.error(error?.message || "Could not load emergency records"))
       .finally(() => setLoading(false));
   }, []);
@@ -63,15 +115,16 @@ export default function DoctorEmergencyRecords() {
     if (viewer?.url) URL.revokeObjectURL(viewer.url);
   }, [viewer]);
 
-  const openRecord = async (request: EmergencyAccessRequest) => {
-    setOpeningRequest(request.id);
+  const openRecord = async (request: EmergencyAccessRequest, recordId?: number, recordName?: string) => {
+    const actionKey = recordId !== undefined ? `${request.id}-${recordId}` : request.id;
+    setOpeningRequest(actionKey);
     try {
       const grant = await issueEmergencyGrant(request.id);
-      const url = await viewEmergencyRecordFile(grant.grant_token);
+      const url = await viewEmergencyRecordFile(grant.grant_token, recordId);
       setViewer({
         url,
         expiresAt: grant.expires_at,
-        title: request.context.replaceAll("_", " "),
+        title: recordName ? `${recordName} · Emergency Medical Record` : `${request.recordName ? request.recordName + " · " : ""}${request.context.replaceAll("_", " ")}`,
       });
     } catch (error: any) {
       toast.error(error?.message || "Could not open emergency medical record");
@@ -118,33 +171,78 @@ export default function DoctorEmergencyRecords() {
           ) : approvedRequests.length ? (
             <div className="space-y-3">
               {approvedRequests.map((request) => (
-                <div key={request.id} className="rounded-md border p-4">
+                <div key={request.id} className="rounded-md border p-4 space-y-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-semibold">{request.context.replaceAll("_", " ")}</p>
+                        <p className="font-semibold">
+                          {request.isAllRecords
+                            ? "Entire Medical Record"
+                            : `${request.recordName ? request.recordName + " · " : ""}${request.context.replaceAll("_", " ")}`}
+                        </p>
                         <Badge variant="outline" className="border-success/40 text-success">
                           <ShieldCheck className="mr-1 h-3 w-3" />Approved
+                        </Badge>
+                        <Badge variant="outline" className="border-warning/40 text-warning">
+                          <Clock3 className="mr-1 h-3 w-3" />30-Minute Break-Glass
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">{request.reason}</p>
                       <p className="text-xs text-muted-foreground">
-                        Patient: {request.patientWallet} · Record ID: {request.recordId}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Requested resources: {request.requestedResources.join(", ")}
+                        Patient: {request.patientWallet} · {request.isAllRecords ? "Scope: Full Medical Record (All Records)" : `Record: ${request.recordName || `ID ${request.recordId}`}`}
                       </p>
                       {request.hospitalName && (
                         <p className="text-xs text-muted-foreground">Hospital: {request.hospitalName}</p>
                       )}
                     </div>
-                    <Button onClick={() => openRecord(request)} disabled={openingRequest !== null}>
-                      {openingRequest === request.id
-                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        : <FileHeart className="mr-2 h-4 w-4" />}
-                      View emergency record
-                    </Button>
+                    {!request.isAllRecords && (
+                      <Button onClick={() => openRecord(request)} disabled={openingRequest !== null}>
+                        {openingRequest === request.id
+                          ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          : <FileHeart className="mr-2 h-4 w-4" />}
+                        View emergency record
+                      </Button>
+                    )}
                   </div>
+
+                  {request.isAllRecords && (
+                    <div className="border-t pt-3 space-y-2">
+                      <p className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <FileHeart className="h-3.5 w-3.5 text-primary" />
+                        Patient Records Available Under This Emergency Grant:
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {patientRecords[request.patientWallet]?.length ? (
+                          patientRecords[request.patientWallet].map((rec) => (
+                            <Button
+                              key={rec.recordId}
+                              size="sm"
+                              variant="outline"
+                              className="border-primary/40 hover:bg-primary/10"
+                              onClick={() => openRecord(request, rec.recordId, rec.name || `Record ID ${rec.recordId}`)}
+                              disabled={openingRequest !== null}
+                            >
+                              {openingRequest === `${request.id}-${rec.recordId}` ? (
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <FileHeart className="mr-1.5 h-3.5 w-3.5 text-primary" />
+                              )}
+                              View {rec.name || `Record (ID ${rec.recordId})`}
+                            </Button>
+                          ))
+                        ) : (
+                          <Button
+                            size="sm"
+                            onClick={() => openRecord(request)}
+                            disabled={openingRequest !== null}
+                          >
+                            <FileHeart className="mr-1.5 h-3.5 w-3.5" />
+                            View patient record
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -159,11 +257,16 @@ export default function DoctorEmergencyRecords() {
       <Dialog open={!!viewer} onOpenChange={(open) => !open && closeViewer()}>
         <DialogContent className="max-w-5xl" onContextMenu={(event) => event.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>{viewer?.title || "Emergency medical record"}</DialogTitle>
-            <DialogDescription className="flex items-center gap-1">
-              <Clock3 className="h-4 w-4" />
-              The full uploaded PDF is available read-only for this emergency grant. The view closes when the 30-minute grant expires.
-            </DialogDescription>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <DialogTitle>{viewer?.title || "Emergency medical record"}</DialogTitle>
+                <DialogDescription className="flex items-center gap-1 mt-1">
+                  <Clock3 className="h-4 w-4" />
+                  Read-only emergency consultation. Closes automatically when the 30-minute grant expires.
+                </DialogDescription>
+              </div>
+              {viewer?.expiresAt && <ViewerCountdown expiresAt={viewer.expiresAt} />}
+            </div>
           </DialogHeader>
           {viewer && (
             <iframe

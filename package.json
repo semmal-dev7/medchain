@@ -8,7 +8,8 @@
     "test": "hardhat test",
     "deploy:amoy": "hardhat run scripts/deploy.js --network amoy",
     "deploy:emergency:amoy:dev": "hardhat run scripts/deploy-emergency-dev.js --network amoy",
-    "deploy:mumbai": "hardhat run scripts/deploy.js --network mumbai"
+    "deploy:mumbai": "hardhat run scripts/deploy.js --network mumbai",
+    "zk:demo": "node zk/scripts/run_zkp_demo.js"
   },
   "repository": {
     "type": "git",
