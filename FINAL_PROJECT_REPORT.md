@@ -179,34 +179,23 @@ To eliminate single points of compromise and prevent fraudulent "emergency" acce
 ```mermaid
 sequenceDiagram
     autonumber
-    actor ERDoc as Requesting Emergency Doctor
-    actor Colleague1 as Selected Doctor 1 (Sarah)
-    actor Colleague2 as Selected Doctor 2 (James)
-    actor Colleague3 as Selected Doctor 3 (David)
-    participant Engine as Access Consensus Engine (Backend)
-    participant Amoy as Polygon Amoy Blockchain
+    actor ERDoc as Emergency Doctor
+    actor Approvers as 3 Selected ER Doctors
+    participant Backend as Django REST Backend
+    participant ZKP as Circom Groth16 Prover
+    participant Amoy as Polygon Amoy
     
-    ERDoc->>Engine: Raise Emergency Request (Patient Wallet, Reason, Select 3 Hospital Colleagues)
-    Note over Engine: Request Status: PENDING (30-min window started)
-    Engine-->>Colleague1: Notification: Emergency Approval Requested
-    Engine-->>Colleague2: Notification: Emergency Approval Requested
-    Engine-->>Colleague3: Notification: Emergency Approval Requested
-
-    Colleague1->>Engine: Review Reason & Cast Vote: APPROVE (Vote 1/2)
-    Note over Engine: Status: 1 Approval Recorded. Waiting for 2nd.
-
-    alt Path A: Second Colleague Approves (Threshold Met)
-        Colleague2->>Engine: Cast Vote: APPROVE (Vote 2/2)
-        Note over Engine: Threshold 2-of-3 SATISFIED!
-        Engine->>Engine: Generate 30-Minute Temporary Grant Token
-        Engine->>Amoy: Emit EmergencyAccessGranted Event
-        Engine-->>ERDoc: Issue Temporary Grant (All Patient Records Unlocked for 30 Mins)
-        Note over ERDoc: Doctor views records; UI displays 30:00 live countdown
-    else Path B: Any Colleague Rejects (Immediate Rejection)
-        Colleague3->>Engine: Cast Vote: REJECT
-        Note over Engine: Immediate Closure! Status: REJECTED
-        Engine-->>ERDoc: Emergency Access Denied
-    end
+    ERDoc->>Backend: Create Emergency Request (Patient, Reason, 3 Selected Approvers)
+    Backend-->>Approvers: Notify 3 Selected Hospital Doctors
+    Note over Approvers: 30-Minute Break-Glass Window Begins
+    Approvers->>Backend: Doctor 1 Approves (Vote 1/2)
+    Approvers->>Backend: Doctor 2 Approves (Vote 2/2 - Threshold Met)
+    Backend->>ZKP: Generate Zero-Knowledge Predicate Proof
+    ZKP->>Amoy: Verify Groth16 Proof on EmergencyZKPortal
+    Amoy-->>Backend: Proof Verified on-chain
+    Backend-->>ERDoc: Issue 30-Minute Temporary Grant Token
+    Note over ERDoc: Doctor Views Patient Records with Live 30-Min Countdown
+    Note over ERDoc,Backend: Access expires after 30 mins and immutable audit is logged
 ```
 
 ### 4.1 Enforced Multi-Party Invariants
