@@ -19,6 +19,8 @@ const PATIENT_PRIVACY_ABI = [
   "function approveAccess(uint256 recordId, address doctor)",
   "function rejectAccess(uint256 recordId, address doctor)",
   "function revokeAccess(uint256 recordId, address doctor)",
+  "function getAccessRequestStatus(uint256 recordId, address doctor) view returns (uint8 status, uint64 requestedAt, uint64 updatedAt)",
+  "function hasAccess(uint256 recordId, address doctor) view returns (bool)",
   "event RecordCreated(uint256 indexed recordId, address indexed patient, string ipfsHash, uint256 timestamp)",
 ];
 
@@ -687,34 +689,61 @@ export const updateAccessStatus = async (id: string, status: "approved" | "rejec
     if (onChainStatus === 2) {
       console.log("Access request is already approved on-chain. Syncing database.");
     } else {
-      const transaction = await contract.approveAccess(
-        accessRequest.record_id,
-        accessRequest.doctor_wallet,
-        await getAmoyGasOverrides(contract),
-      );
-      const receipt = await transaction.wait();
-      txHash = receipt.transactionHash;
+      try {
+        const transaction = await contract.approveAccess(
+          accessRequest.record_id,
+          accessRequest.doctor_wallet,
+          await getAmoyGasOverrides(contract),
+        );
+        const receipt = await transaction.wait();
+        txHash = receipt.transactionHash;
+      } catch (contractErr: any) {
+        const errStr = JSON.stringify(contractErr) || contractErr?.message || "";
+        if (errStr.includes("0xdb619333") || errStr.includes("AccessRequestNotPending")) {
+          console.log("Contract indicates request is already transitioned on-chain. Syncing database.");
+        } else {
+          throw contractErr;
+        }
+      }
     }
   } else {
     // status === "rejected"
     if (onChainStatus === 3 || onChainStatus === 4) {
       console.log("Access request is already rejected/revoked on-chain. Syncing database.");
     } else if (onChainStatus === 2) {
-      const transaction = await contract.revokeAccess(
-        accessRequest.record_id,
-        accessRequest.doctor_wallet,
-        await getAmoyGasOverrides(contract),
-      );
-      const receipt = await transaction.wait();
-      txHash = receipt.transactionHash;
+      try {
+        const transaction = await contract.revokeAccess(
+          accessRequest.record_id,
+          accessRequest.doctor_wallet,
+          await getAmoyGasOverrides(contract),
+        );
+        const receipt = await transaction.wait();
+        txHash = receipt.transactionHash;
+      } catch (contractErr: any) {
+        const errStr = JSON.stringify(contractErr) || contractErr?.message || "";
+        if (errStr.includes("0xdb619333") || errStr.includes("AccessNotGranted") || errStr.includes("0x3ba59ed6")) {
+          console.log("Contract indicates access is already revoked on-chain. Syncing database.");
+        } else {
+          throw contractErr;
+        }
+      }
     } else {
-      const transaction = await contract.rejectAccess(
-        accessRequest.record_id,
-        accessRequest.doctor_wallet,
-        await getAmoyGasOverrides(contract),
-      );
-      const receipt = await transaction.wait();
-      txHash = receipt.transactionHash;
+      try {
+        const transaction = await contract.rejectAccess(
+          accessRequest.record_id,
+          accessRequest.doctor_wallet,
+          await getAmoyGasOverrides(contract),
+        );
+        const receipt = await transaction.wait();
+        txHash = receipt.transactionHash;
+      } catch (contractErr: any) {
+        const errStr = JSON.stringify(contractErr) || contractErr?.message || "";
+        if (errStr.includes("0xdb619333") || errStr.includes("AccessRequestNotPending")) {
+          console.log("Contract indicates request is already transitioned on-chain. Syncing database.");
+        } else {
+          throw contractErr;
+        }
+      }
     }
   }
 
@@ -744,13 +773,22 @@ export const revokeAccess = async (id: string): Promise<void> => {
 
   let txHash = "";
   if (onChainStatus === 2) {
-    const transaction = await contract.revokeAccess(
-      accessRequest.record_id,
-      accessRequest.doctor_wallet,
-      await getAmoyGasOverrides(contract),
-    );
-    const receipt = await transaction.wait();
-    txHash = receipt.transactionHash;
+    try {
+      const transaction = await contract.revokeAccess(
+        accessRequest.record_id,
+        accessRequest.doctor_wallet,
+        await getAmoyGasOverrides(contract),
+      );
+      const receipt = await transaction.wait();
+      txHash = receipt.transactionHash;
+    } catch (contractErr: any) {
+      const errStr = JSON.stringify(contractErr) || contractErr?.message || "";
+      if (errStr.includes("AccessNotGranted") || errStr.includes("0x3ba59ed6")) {
+        console.log("Access is already revoked on-chain. Syncing database.");
+      } else {
+        throw contractErr;
+      }
+    }
   }
 
   await request(`/access/requests/${id}/revoke`, {
