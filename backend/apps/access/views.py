@@ -682,9 +682,14 @@ class _PatientDecisionBaseView(APIView):
         if not req:
             return Response({"detail": "Access request not found"}, status=status.HTTP_404_NOT_FOUND)
         if req.status != AccessRequest.STATUS_PENDING and self.target_status != AccessRequest.STATUS_REVOKED:
-            return Response({"detail": "Request is not pending"}, status=status.HTTP_409_CONFLICT)
-        if self.target_status == AccessRequest.STATUS_REVOKED and req.status != AccessRequest.STATUS_APPROVED:
-            return Response({"detail": "Only approved requests can be revoked"}, status=status.HTTP_409_CONFLICT)
+            if req.status == self.target_status:
+                return Response(AccessRequestSerializer(req).data)
+            if self.target_status == AccessRequest.STATUS_REJECTED and req.status == AccessRequest.STATUS_APPROVED:
+                pass
+            else:
+                return Response({"detail": "Request is not pending"}, status=status.HTTP_409_CONFLICT)
+        if self.target_status == AccessRequest.STATUS_REVOKED and req.status not in (AccessRequest.STATUS_APPROVED, AccessRequest.STATUS_PENDING):
+            return Response({"detail": "Only approved or pending requests can be revoked"}, status=status.HTTP_409_CONFLICT)
 
         chain = ChainService()
         if not chain.assert_patient_owns_record(req.record.record_id, patient.wallet):

@@ -39,8 +39,12 @@ export default function AccessManagement() {
       await updateAccessStatus(id, action);
       setRequests((prev) => prev.map((r) => r.id === id ? { ...r, status: action } : r));
       toast.success(`Access ${action}`);
-    } catch { toast.error("Action failed"); }
-    finally { setActionLoading(null); }
+    } catch (error: any) {
+      console.error("Action error:", error);
+      toast.error(error?.message || "Action failed");
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handleRevoke = async () => {
@@ -50,8 +54,13 @@ export default function AccessManagement() {
       await revokeAccess(revokeTarget.id);
       setRequests((prev) => prev.map((r) => r.id === revokeTarget.id ? { ...r, status: "revoked" } : r));
       toast.success("Access revoked");
-    } catch { toast.error("Revoke failed"); }
-    finally { setActionLoading(null); setRevokeTarget(null); }
+    } catch (error: any) {
+      console.error("Revoke error:", error);
+      toast.error(error?.message || "Revoke failed");
+    } finally {
+      setActionLoading(null);
+      setRevokeTarget(null);
+    }
   };
 
   return (

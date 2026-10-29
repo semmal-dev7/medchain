@@ -669,16 +669,59 @@ export const updateAccessStatus = async (id: string, status: "approved" | "rejec
   const accessRequest = (rows || []).find((row: any) => row.id === id);
   if (!accessRequest) throw new Error("Access request not found");
   const contract = await getPatientPrivacyContract();
-  const transaction = await contract[status === "approved" ? "approveAccess" : "rejectAccess"](
-    accessRequest.record_id,
-    accessRequest.doctor_wallet,
-    await getAmoyGasOverrides(contract),
-  );
-  await transaction.wait();
+
+  let onChainStatus = 0;
+  try {
+    const statusData = await contract.getAccessRequestStatus(
+      accessRequest.record_id,
+      accessRequest.doctor_wallet
+    );
+    onChainStatus = Number(statusData.status ?? statusData[0] ?? 0);
+  } catch (err) {
+    console.warn("Could not query on-chain access request status:", err);
+  }
+
+  let txHash = "";
+
+  if (status === "approved") {
+    if (onChainStatus === 2) {
+      console.log("Access request is already approved on-chain. Syncing database.");
+    } else {
+      const transaction = await contract.approveAccess(
+        accessRequest.record_id,
+        accessRequest.doctor_wallet,
+        await getAmoyGasOverrides(contract),
+      );
+      const receipt = await transaction.wait();
+      txHash = receipt.transactionHash;
+    }
+  } else {
+    // status === "rejected"
+    if (onChainStatus === 3 || onChainStatus === 4) {
+      console.log("Access request is already rejected/revoked on-chain. Syncing database.");
+    } else if (onChainStatus === 2) {
+      const transaction = await contract.revokeAccess(
+        accessRequest.record_id,
+        accessRequest.doctor_wallet,
+        await getAmoyGasOverrides(contract),
+      );
+      const receipt = await transaction.wait();
+      txHash = receipt.transactionHash;
+    } else {
+      const transaction = await contract.rejectAccess(
+        accessRequest.record_id,
+        accessRequest.doctor_wallet,
+        await getAmoyGasOverrides(contract),
+      );
+      const receipt = await transaction.wait();
+      txHash = receipt.transactionHash;
+    }
+  }
+
   const action = status === "approved" ? "approve" : "reject";
   await request(`/access/requests/${id}/${action}`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ decision_tx_hash: txHash }),
   });
 };
 
@@ -687,15 +730,32 @@ export const revokeAccess = async (id: string): Promise<void> => {
   const accessRequest = (rows || []).find((row: any) => row.id === id);
   if (!accessRequest) throw new Error("Access request not found");
   const contract = await getPatientPrivacyContract();
-  const transaction = await contract.revokeAccess(
-    accessRequest.record_id,
-    accessRequest.doctor_wallet,
-    await getAmoyGasOverrides(contract),
-  );
-  await transaction.wait();
+
+  let onChainStatus = 0;
+  try {
+    const statusData = await contract.getAccessRequestStatus(
+      accessRequest.record_id,
+      accessRequest.doctor_wallet
+    );
+    onChainStatus = Number(statusData.status ?? statusData[0] ?? 0);
+  } catch (err) {
+    console.warn("Could not query on-chain access request status:", err);
+  }
+
+  let txHash = "";
+  if (onChainStatus === 2) {
+    const transaction = await contract.revokeAccess(
+      accessRequest.record_id,
+      accessRequest.doctor_wallet,
+      await getAmoyGasOverrides(contract),
+    );
+    const receipt = await transaction.wait();
+    txHash = receipt.transactionHash;
+  }
+
   await request(`/access/requests/${id}/revoke`, {
     method: "POST",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ decision_tx_hash: txHash }),
   });
 };
 
