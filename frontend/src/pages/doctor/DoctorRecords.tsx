@@ -18,7 +18,17 @@ export default function DoctorRecords() {
     const loadRecords = async () => {
       try {
         const approved = await getApprovedRecordAccess();
-        setRecords(await Promise.all(approved.map((item: any) => getAuthorizedRecord(item.record_id))));
+        const loaded = await Promise.all(
+          approved.map(async (item: any) => {
+            try {
+              return await getAuthorizedRecord(item.record_id);
+            } catch (err) {
+              console.warn("Could not load details for record", item.record_id, err);
+              return item;
+            }
+          })
+        );
+        setRecords(loaded.filter(Boolean));
       } catch (error: any) {
         toast.error(error?.message || "Could not load approved records");
       } finally {

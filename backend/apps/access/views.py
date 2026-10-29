@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from cryptography.fernet import InvalidToken
-from django.db import transaction
+from django.db import models, transaction
 from django.http import FileResponse
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -154,7 +154,7 @@ class AuthorizedRecordView(APIView):
         if not record:
             return Response({"detail": "Record not found"}, status=status.HTTP_404_NOT_FOUND)
         approved = AccessRequest.objects.filter(
-            record=record,
+            models.Q(record=record) | models.Q(patient=record.patient),
             doctor=doctor,
             status=AccessRequest.STATUS_APPROVED,
         ).exists()
@@ -180,7 +180,7 @@ class ViewAuthorizedRecordView(APIView):
         doctor = get_request_profile(request)
         record = Record.objects.filter(record_id=record_id, active=True).first()
         approved = AccessRequest.objects.filter(
-            record=record,
+            models.Q(record=record) | models.Q(patient=record.patient),
             doctor=doctor,
             status=AccessRequest.STATUS_APPROVED,
         ).exists() if record else False
@@ -215,7 +215,7 @@ class UpdateAuthorizedRecordFhirView(APIView):
         serializer = ClinicalResourcesSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         record = Record.objects.filter(record_id=record_id, active=True).first()
-        approved = AccessRequest.objects.filter(record=record, doctor=doctor, status=AccessRequest.STATUS_APPROVED).exists() if record else False
+        approved = AccessRequest.objects.filter(models.Q(record=record) | models.Q(patient=record.patient), doctor=doctor, status=AccessRequest.STATUS_APPROVED).exists() if record else False
         hospital_member = HospitalMembership.objects.filter(
             user=doctor,
             role__in=[HospitalMembership.ROLE_DOCTOR, HospitalMembership.ROLE_EMERGENCY_DOCTOR, HospitalMembership.ROLE_STAFF],

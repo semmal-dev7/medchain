@@ -813,10 +813,21 @@ export const getApprovedPatients = async (): Promise<PatientInfo[]> => {
       recordCount: 0,
       status: "pending" as const,
     };
-    current.recordCount += 1;
     if (r.status === "approved") current.status = "approved";
     map.set(wallet, current);
   });
+
+  // Calculate actual record count for each patient
+  await Promise.all(
+    Array.from(map.values()).map(async (patient) => {
+      try {
+        const records = await request(`/access/patient-records?wallet=${encodeURIComponent(patient.wallet)}`);
+        patient.recordCount = Array.isArray(records) && records.length > 0 ? records.length : 1;
+      } catch {
+        patient.recordCount = 1;
+      }
+    })
+  );
 
   return Array.from(map.values());
 };
@@ -825,9 +836,47 @@ export const getAuthorizedRecord = async (recordId: number) => {
   return request(`/access/records/${recordId}`);
 };
 
-export const getApprovedRecordAccess = async () => {
+export const getApprovedRecordAccess = async (): Promise<any[]> => {
   const rows = await request("/access/requests/outgoing");
-  return (rows || []).filter((row: any) => row.status === "approved");
+  const approvedRequests = (rows || []).filter((row: any) => row.status === "approved");
+
+  // Get unique patient wallets from approved requests
+  const patientWallets = Array.from(
+    new Set(approvedRequests.map((r: any) => String(r.patient_wallet || "").toLowerCase()).filter(Boolean))
+  );
+
+  if (patientWallets.length === 0) return [];
+
+  // For each approved patient, fetch all of their active medical records
+  const recordLists = await Promise.all(
+    patientWallets.map(async (wallet) => {
+      try {
+        const targets = await request(`/access/patient-records?wallet=${encodeURIComponent(wallet)}`);
+        return Array.isArray(targets) ? targets : [];
+      } catch (err) {
+        console.warn(`Could not load records for patient ${wallet}:`, err);
+        return [];
+      }
+    })
+  );
+
+  const allRecordsMap = new Map<number, any>();
+  for (const list of recordLists) {
+    for (const rec of list) {
+      if (rec?.record_id !== undefined && !allRecordsMap.has(rec.record_id)) {
+        allRecordsMap.set(rec.record_id, rec);
+      }
+    }
+  }
+
+  // Also include original records from approvedRequests
+  for (const req of approvedRequests) {
+    if (req?.record_id !== undefined && !allRecordsMap.has(req.record_id)) {
+      allRecordsMap.set(req.record_id, req);
+    }
+  }
+
+  return Array.from(allRecordsMap.values());
 };
 
 const mapAppointment = (row: any): Appointment => ({ id: row.id, patientWallet: row.patient_wallet, doctorWallet: row.doctor_wallet, patientName: row.patient_name || row.patient_wallet, doctorName: row.doctor_name || row.doctor_wallet, scheduledFor: row.scheduled_for, reason: row.reason || "", status: row.status });
